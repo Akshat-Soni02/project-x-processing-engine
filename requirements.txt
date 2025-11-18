@@ -1,2 +1,5 @@
 fastapi
 uvicorn[standard]
+python-json-logger
+fastapi
+uvicorn[standard]
