@@ -4,7 +4,6 @@ from utility.logging import get_logger,configure_logging
 
 
 app = FastAPI()
-configure_logging()
 logger = get_logger(__name__)
 
 @app.get("/health")
