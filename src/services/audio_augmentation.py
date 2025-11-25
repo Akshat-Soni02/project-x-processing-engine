@@ -1,3 +1,6 @@
+# Audio Augmentation Service
+# This module provides stateless audio augmentation functionalities, including silence removal.
+
 import io
 import time
 import logging
