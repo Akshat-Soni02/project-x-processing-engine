@@ -1,3 +1,19 @@
-venv
 .env
-*__pycache__/*
+credentials.json
+test.wav
+
+# Byte-compiled / optimized files
+*.py[cod]
+
+# Python cache directories
+__pycache__/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
