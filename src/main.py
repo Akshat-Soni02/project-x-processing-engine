@@ -47,7 +47,18 @@ logger.info("Initialized STT, Smart, and Noteback providers")
 vector_db = Database()
 logger.info("Initialized Vector Database")
 
-input = read_file("test.wav", is_audio=True)
+# Load input file with error handling
+input_data = None
+try:
+    input_data = read_file("test.wav", is_audio=True)
+    if input_data is None:
+        logger.warning("Input file loaded but is empty")
+    else:
+        logger.info(f"Successfully loaded input file ({len(input_data)} bytes)")
+except FileNotFoundError:
+    logger.error("Input file 'test.wav' not found")
+except Exception as e:
+    logger.error(f"Failed to load input file: {str(e)}", exc_info=True)
 
 
 # ==================== Request Handlers ====================
@@ -58,15 +69,33 @@ input = read_file("test.wav", is_audio=True)
 
 
 def run_stt():
-    response, cost_data = stt_branch(stt_provider, input, User_Input_Type.AUDIO_WAV)
-    print(response)
+    if input_data is None:
+        logger.error("[STT] Cannot run - input data not available")
+        return None
+
+    try:
+        response, metrics = stt_branch(stt_provider, input_data, User_Input_Type.AUDIO_WAV)
+        logger.info("[STT] Response received successfully")
+        return response
+    except Exception as e:
+        logger.error(f"[STT] Pipeline failed: {str(e)}", exc_info=True)
+        return None
 
 
 def run_smart():
-    response, cost_data = smart_branch(
-        smart_provider, noteback_provider, vector_db, input, User_Input_Type.AUDIO_WAV
-    )
-    print(response)
+    if input_data is None:
+        logger.error("[SMART] Cannot run - input data not available")
+        return None
+
+    try:
+        response, metrics = smart_branch(
+            smart_provider, noteback_provider, vector_db, input_data, User_Input_Type.AUDIO_WAV
+        )
+        logger.info("[SMART] Response received successfully")
+        return response
+    except Exception as e:
+        logger.error(f"[SMART] Pipeline failed: {str(e)}", exc_info=True)
+        return None
 
 
 # Server health check endpoint
