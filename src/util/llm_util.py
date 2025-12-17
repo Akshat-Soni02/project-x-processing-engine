@@ -1,4 +1,4 @@
-from schemas.llm_types import LLMProviderType, GeminiConfig, OpenAIConfig
+from schemas.llm_types import LLMProviderType
 from providers.llm_providers import GeminiProvider, OpenAIProvider
 
 

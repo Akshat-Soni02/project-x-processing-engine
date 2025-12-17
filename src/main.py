@@ -1,16 +1,77 @@
-from typing import Annotated
-from fastapi import FastAPI, UploadFile, File
-from services.audio_augmentation import AudioAugmentation
-from services.llm_service import ConfigDict
-from common.logging import get_logger
+from typing import Dict, Any,Optional
+from contextlib import asynccontextmanager 
+import threading
+from datetime import datetime
 
-app = FastAPI()
+from fastapi.responses import JSONResponse
+from fastapi import FastAPI, UploadFile, File,HTTPException, status
+from pydantic import BaseModel,Field,field_validator
+
+from services.pubsub.pubsub_service import PubSubService
+from common.logging import get_logger, configure_logging
+from config.settings import ARILO_SUBSCRIPTION_ID,SMART_SUBSCRIPTION_ID ,APP_ENV, LOG_LEVEL
+
+# Configure logging
+configure_logging(env=APP_ENV, level=LOG_LEVEL)
 logger = get_logger(__name__)
 
-# TODO
-# Auth middleware for inter service requests
-# DB Setup for process state management & metadata storing
+# Global state
+services: Dict[str, PubSubService] = {}
+listener_futures: Dict[str, Optional[Any]] = {"stt": None, "smart": None}
 
+
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    """
+    Manage application lifecycle (startup/shutdown).
+    Handles Pub/Sub listener initialization and cleanup.
+    """
+    # Startup
+    logger.info("Application startup: initializing Pub/Sub service")
+    
+    try:
+       # ensure these come from config.settings
+        services["stt"] = PubSubService(SUBSCRIPTION_ID=ARILO_SUBSCRIPTION_ID,NAME="stt")
+        services["smart"] = PubSubService(SUBSCRIPTION_ID=SMART_SUBSCRIPTION_ID,NAME="smart")
+
+        def run_listener(label: str):
+            try:
+                future = services[label].start_listener()
+                listener_futures[label] = future
+                future.result()
+            except Exception as e:
+                logger.error(f"Listener error ({label}): {e}", exc_info=True)
+                
+        threading.Thread(target=run_listener, args=("stt",), daemon=True).start()
+        threading.Thread(target=run_listener, args=("smart",), daemon=True).start()
+        logger.info("Pub/Sub listeners started: stt, smart")
+        logger.info("Starting listeners",
+            extra={
+              "stt_subscription": services["stt"].subscription_path,
+              "smart_subscription": services["smart"].subscription_path,
+            })
+
+        yield
+
+    # Shutdown
+        logger.info("Shutdown: stopping Pub/Sub listeners")
+        for label, svc in services.items():
+            try:
+                svc.stop_listener(listener_futures.get(label))
+                logger.info(f"Stopped listener: {label}")
+            except Exception as e:
+                logger.error(f"Error stopping listener ({label}): {e}", exc_info=True)
+
+    except Exception as e:
+        logger.critical(f"Critical error during startup/shutdown: {e}", exc_info=True)
+        raise
+    
+app = FastAPI(
+    title="Arilo Processing Engine",
+    description="Audio processing engine with Google Cloud Pub/Sub integration",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 # Server health check endpoint
 @app.get("/health")
@@ -19,40 +80,3 @@ def health():
     return {"status": "ok"}
 
 
-# Testing endpoints
-
-
-# TOREMOVE
-# Add support to take audios as input  done
-# log audio format & audio properties  already
-# log data came after processing audio - processing time,
-# processed audio time, processed audio format [if changed]
-# Appropriate errors when - failed to find lib, failed to process due to upstream, failure due to server issues, warnings when taking longer then expected time [comparison against predetermined time with ref to some metric]
-@app.post("/augment-audio")
-async def augment_audio(audio_file: Annotated[UploadFile, File()]):
-    audio_bytes = await audio_file.read()
-
-    service = AudioAugmentation({})
-    audio = service.run_pipeline(audio_bytes)
-
-    with open("output_audio.wav", "wb") as f:
-        f.write(audio)
-    return {"message": "Audio augmentation endpoint"}
-
-
-@app.post("/llm-test")
-def llm_test():
-    from services.llm_service import LLMService
-
-    config = {
-        "provider": "gemini",
-        "api_key": "AQ.Ab8RN6LbX-AmjvGNCW_E0Q7gi30mD7atLhLcGCHEKJbHQniZbw",
-        "model_name": "gemini-2.5-flash",
-        "temperature": 0.5,
-        "max_tokens": 150,
-    }
-
-    config = ConfigDict(**config)
-    llm_service = LLMService(config)
-    response = llm_service.process("Hello, how are you?")
-    return {"llm_response": response.content}

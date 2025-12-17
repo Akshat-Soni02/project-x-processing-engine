@@ -8,3 +8,8 @@ ruff
 black
 python-multipart
 audioop-lts
+google-cloud-pubsub
+python-dotenv
+google-auth
+
+
