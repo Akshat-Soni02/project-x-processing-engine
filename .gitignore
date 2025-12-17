@@ -2,6 +2,7 @@
 
 credentials.json
 llm_credentials.json
+gcs_credentials.json
 test.wav
 
 # Byte-compiled / optimized files
