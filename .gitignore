@@ -1,6 +1,7 @@
 venv
 .env
 *__pycache__/*
-documind-*.json
-documind-474519-afbe98b3daf0.json
+credentials.json
+*.log
+.DS_Store
 
