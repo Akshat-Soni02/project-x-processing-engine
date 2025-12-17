@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "input_to_sentences": {
+      "type": "array",
+      "description": "A complete, natural-English breakdown of the input into clean, standalone sentences, each tagged with an importance score.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sentence": {
+            "type": "string",
+            "description": "A polished, standalone sentence preserving original meaning and tone."
+          },
+          "importance_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "A real-valued importance score indicating how critical this sentence is for contextual retrieval."
+          }
+        },
+        "required": ["sentence", "importance_score"]
+      }
+    },
+    "search_anchors": {
+      "type": "array",
+      "description": "1–3 dense retrieval phrases that capture distinct thematic or contextual angles for vector search.",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["input_to_sentences", "search_anchors"]
+}

@@ -1,5 +1,7 @@
 .env
+
 credentials.json
+llm_credentials.json
 test.wav
 
 # Byte-compiled / optimized files
@@ -18,3 +20,4 @@ env/
 .DS_Store
 .idea/
 .vscode/
+

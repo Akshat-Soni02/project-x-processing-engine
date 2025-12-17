@@ -14,6 +14,12 @@ dependencies = [
     "pre-commit",
     "python-json-logger"
     "audioop-lts"
+    "python-json-logger",
+    "google-cloud-storage",
+    "psycopg",
+    "google-cloud-aiplatform",
+    "numpy",
+    "pandas"
 ]
 
 
@@ -21,9 +27,9 @@ dependencies = [
 where = ["src"]
 
 [tool.ruff]
-select = ["E", "F", "W"]
 line-length = 100
-ignore = []
+select = ["E", "F", "W"]
+ignore = ["E501"]
 
 [tool.black]
 line-length = 100

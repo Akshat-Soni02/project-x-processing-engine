@@ -1,0 +1,4 @@
+Your task is to process the provided input. Adhere strictly to all instructions, mandates, and constraints defined in the system message to generate a single, valid JSON object that matches the required output schema.
+
+current_note of user: {{current_note}}
+history_context of user retrieved from vector DB: {{history_context}}

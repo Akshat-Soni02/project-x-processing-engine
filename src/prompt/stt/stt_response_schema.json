@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "properties": {
+    "stt": {
+      "type": "string",
+      "description": "Verbatim speech-to-text transcription."
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of actionable items derived from the audio."
+    },
+    "anxiety_score": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "description": "1 is low (calm), 5 is high (panicked/fast/strained)."
+    },
+    "language": {
+      "type": "string",
+      "description": "ISO 639-1 language code (e.g., 'en', 'hi')."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of single-word, singular tags for organization (e.g., 'redFort', 'rohit', 'goa')."
+    }
+  },
+  "required": ["stt", "tasks", "anxiety_score", "language", "tags"]
+}

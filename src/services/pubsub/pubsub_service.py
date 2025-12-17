@@ -8,6 +8,8 @@ from google.oauth2 import service_account
 from google.api_core.retry import Retry
 from google.api_core import exceptions
 
+from services.llm.llm_service import run_smart,run_stt
+
 from config.settings import (
     GCP_PROJECT_ID,
     GCP_LOCATION,
@@ -113,11 +115,14 @@ class PubSubService:
         """Overide this method with your business logic to process the message."""
         logger.info(f"Processing payload: {payload}")
         if source == "stt":
-            pass
-            #Implement business logic for stt messages
+            response,metrics =run_stt()
+            logger.info(f"STT response: {response}, metrics: {metrics}")
+            
         elif source == "smart":
-            #Implement business logic for smart messages
-            pass
+            response,metrics = run_smart()
+            logger.info(f"SMART response: {response}, metrics: {metrics}")
+            
+            
 
     def start_listener(self):
         """

@@ -13,3 +13,8 @@ python-dotenv
 google-auth
 
 
+google-cloud-storage
+psycopg
+google-cloud-aiplatform
+numpy
+pandas
