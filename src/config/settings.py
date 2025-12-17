@@ -10,10 +10,12 @@ GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 PUBSUB_TOPIC_ID = os.getenv("PUBSUB_TOPIC_ID", "arilo-llm-topic")
 PUBSUB_SERVICE_ACCOUNT_PATH = os.getenv("PUBSUB_SERVICE_ACCOUNT_PATH", "")
 ARILO_SUBSCRIPTION_ID = os.getenv("ARILO_SUBSCRIPTION_ID", "arilo-llm-subscription")
+SMART_SUBSCRIPTION_ID = os.getenv("SMART_SUBSCRIPTION_ID", "smart-llm-subscription")
 
 required_vars = [
     "GCP_PROJECT_ID",
     "ARILO_SUBSCRIPTION_ID",
+    "SMART_SUBSCRIPTION_ID",
     "PUBSUB_SERVICE_ACCOUNT_PATH"
 ]
 
