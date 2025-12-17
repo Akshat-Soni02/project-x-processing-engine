@@ -10,6 +10,8 @@ GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 ENABLE_VERTEX_AI = os.getenv("ENABLE_VERTEX_AI", "true").lower() == "true"
 PUBSUB_TOPIC_ID = os.getenv("PUBSUB_TOPIC_ID", "arilo-llm-topic")
 PUBSUB_SERVICE_ACCOUNT_PATH = os.getenv("PUBSUB_SERVICE_ACCOUNT_PATH", "")
+LLM_SERVICE_ACCOUNT_PATH = os.getenv("LLM_SERVICE_ACCOUNT_PATH", "")
+GCS_SERVICE_ACCOUNT_PATH = os.getenv("GCS_SERVICE_ACCOUNT_PATH", "")
 ARILO_SUBSCRIPTION_ID = os.getenv("ARILO_SUBSCRIPTION_ID", "arilo-llm-subscription")
 SMART_SUBSCRIPTION_ID = os.getenv("SMART_SUBSCRIPTION_ID", "smart-llm-subscription")
 

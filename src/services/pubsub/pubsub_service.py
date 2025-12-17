@@ -7,6 +7,7 @@ import google.cloud.pubsub_v1 as pubsub_v1
 from google.oauth2 import service_account
 from google.api_core.retry import Retry
 from google.api_core import exceptions
+from common.utils import get_input_data
 
 from services.llm.llm_service import run_smart,run_stt
 
@@ -113,14 +114,24 @@ class PubSubService:
     
     def handle_message(self, payload:dict,source:str):
         """Overide this method with your business logic to process the message."""
-        logger.info(f"Processing payload: {payload}")
+        
+        data = payload.get("data")
+        gcs_audio_url = data.get("gcs_audio_url") if data else None
+        note_id = data.get("note_id") if data else None
+        user_id = data.get("user_id") if data else None
+        location = data.get("location") if data else None
+        timestamp = data.get("timestamp") if data else None
+
+        input_data = get_input_data(gcs_audio_url)
+        print(f"Fetched input data from {gcs_audio_url}: {len(input_data) if input_data else 'None'} bytes")
         if source == "stt":
-            response,metrics =run_stt()
-            logger.info(f"STT response: {response}, metrics: {metrics}")
-            
+            # response,metrics =run_stt()
+            # logger.info(f"STT response: {response}, metrics: {metrics}")
+            pass
         elif source == "smart":
-            response,metrics = run_smart()
-            logger.info(f"SMART response: {response}, metrics: {metrics}")
+            pass
+            # response,metrics = run_smart()
+            # logger.info(f"SMART response: {response}, metrics: {metrics}")
             
             
 

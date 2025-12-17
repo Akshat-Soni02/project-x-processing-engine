@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 from common.logging import get_logger
-
+from google.oauth2 import service_account
+from config.settings import GCS_SERVICE_ACCOUNT_PATH
+from google.cloud import storage
 logger = get_logger(__name__)
 
 
@@ -67,3 +69,27 @@ def write_file(file_path, content):
     except Exception as e:
         logger.error(f"Error writing to file {file_path}: {e}")
         return False
+
+
+def get_input_data(gcs_audio_url: str) -> bytes:
+    """
+    Fetch audio data from a GCS URL.
+
+    Args:
+        gcs_audio_url (str): GCS URL of the audio file.
+    Returns:
+        bytes: Audio file content as bytes, or None if an error occurs.
+    """
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            GCS_SERVICE_ACCOUNT_PATH
+        )
+        client = storage.Client(credentials=credentials)
+        bucket_name, blob_name = gcs_audio_url.replace("gs://", "").split("/", 1)
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        audio_data = blob.download_as_bytes()
+        return audio_data
+    except Exception as e:
+        logger.error(f"Error fetching audio from {gcs_audio_url}: {e}")
+        return None

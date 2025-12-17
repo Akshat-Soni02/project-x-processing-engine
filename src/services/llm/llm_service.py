@@ -8,9 +8,6 @@ from pathlib import Path
 from vector.db import Database
 from common.utils import read_file
 
-
-
-
 # ==================== LLM Client Initialization ====================
 # Initialize Gemini clients at startup for reuse
 # Each provider gets its own client instance for independent scaling
