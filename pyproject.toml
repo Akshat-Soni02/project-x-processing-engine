@@ -13,7 +13,7 @@ dependencies = [
     "black",
     "pre-commit",
     "python-json-logger"
-    audioop-lts
+    "audioop-lts"
 ]
 
 
