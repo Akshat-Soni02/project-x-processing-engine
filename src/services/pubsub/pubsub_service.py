@@ -11,6 +11,8 @@ from common.utils import get_input_data
 
 from services.llm.llm_service import run_smart,run_stt
 
+from services.llm.llm_service import run_smart,run_stt
+
 from config.settings import (
     GCP_PROJECT_ID,
     GCP_LOCATION,
