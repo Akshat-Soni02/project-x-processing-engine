@@ -1,11 +1,11 @@
-from typing import Annotated
-from fastapi import FastAPI, UploadFile, File
+from typing import Dict, Any,Optional
+from contextlib import asynccontextmanager 
 import threading
-from contextlib import asynccontextmanager
-from typing import Dict, Any
+from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
+from fastapi import FastAPI, UploadFile, File,HTTPException, status
+from pydantic import BaseModel,Field,field_validator
 
 from services.pubsub.pubsub_service import PubSubService
 from common.logging import get_logger, configure_logging
@@ -15,36 +15,50 @@ from config.settings import ARILO_SUBSCRIPTION_ID, APP_ENV, LOG_LEVEL
 configure_logging(env=APP_ENV, level=LOG_LEVEL)
 logger = get_logger(__name__)
 
-app = FastAPI(title="Arilo Processing Engine", version="1.0.0")
-
 # Global state
 listener_future = None
 pubsub_service = PubSubService(SUBSCRIPTION_ID=ARILO_SUBSCRIPTION_ID)
-@app.on_event("startup")
-async def startup_event():
-    """Starts the Pub/Sub listener on application startup."""
-    global listener_future
-    logger.info("Starting Pub/Sub listener...")
 
-    def run_listener():
-        global listener_future
-        listener_future = pubsub_service.start_listener()
-        try:
-            listener_future.result()
-        except Exception as e:
-            print(f"Listener error: {e}")
-    listener_thread = threading.Thread(target=run_listener, daemon=True)
-    listener_thread.start()
-    logger.info("Pub/Sub listener started.")
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    """
+    Manage application lifecycle (startup/shutdown).
+    Handles Pub/Sub listener initialization and cleanup.
+    """
+    global _listener_future, _pubsub_service
     
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Stops the Pub/Sub listener on application shutdown."""
-    global listener_future
-    if listener_future:
-        logger.info("Stopping Pub/Sub listener...")
+    # Startup
+    logger.info("Application startup: initializing Pub/Sub service")
+    
+    try:
+        pubsub_service = PubSubService(SUBSCRIPTION_ID=ARILO_SUBSCRIPTION_ID)
+
+        def run_listener():
+            global listener_future
+            listener_future = pubsub_service.start_listener()
+            try:
+                listener_future.result()
+            except Exception as e:
+                logger.error(f"Listener error: {e}")
+        listener_thread = threading.Thread(target=run_listener, daemon=True)
+        listener_thread.start()
+        logger.info("Pub/Sub listener started.")
+    except Exception as e:
+        logger.error(f"Error during startup: {e}")
+        raise
+    yield
+    # Shutdown
+    logger.info("Application shutdown: stopping Pub/Sub listener")
+    if pubsub_service:
         pubsub_service.stop_listener(listener_future)
         logger.info("Pub/Sub listener stopped.")
+    
+app = FastAPI(
+    title="Arilo Processing Engine",
+    description="Audio processing engine with Google Cloud Pub/Sub integration",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 @app.post("/publish")
 async def publish_message(data: dict, attributes: Dict[str, str] | None = None):
