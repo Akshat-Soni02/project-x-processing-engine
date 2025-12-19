@@ -1,7 +1,3 @@
-from schemas.llm_types import LLMProviderType
-from providers.llm_providers import GeminiProvider, OpenAIProvider
-
-
 # def get_config(type: LLMProviderType):
 #     """Retrieves the appropriate LLM configuration class based on the provider type.
 
