@@ -9,10 +9,9 @@ from config.config import User_Input_Type
 from config.settings import GCP_PROJECT_ID, GCP_LOCATION, ENABLE_VERTEX_AI
 from impl.gemini import GeminiProvider
 from impl.llm_branches import stt_branch, smart_branch
-from vector.db import Database
+from db.db import Database
 
 logger = get_logger(__name__)
-vector_db = Database()
 
 # Initialize Gemini client
 gemini_client = genai.Client(
@@ -48,12 +47,13 @@ def run_stt(input_data: bytes):
         return None
 
 
-def run_smart(input_data: bytes):
+def run_smart(input_data: bytes, vector_db: Database):
     """
     Execute the SMART processing pipeline (Context + Noteback).
 
     Args:
         input_data (bytes/str): Input data to process (audio or text depending on branch config).
+        vector_db (Database): Database instance for context processing.
 
     Returns:
         tuple: (response_dict, metrics_dict) or None if processing fails.

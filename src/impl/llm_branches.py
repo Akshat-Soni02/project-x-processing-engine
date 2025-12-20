@@ -10,7 +10,7 @@ from common.logging import get_logger
 
 from config.config import Llm_Call, User_Input_Type
 from impl.llm_input import get_llm_input
-from vector.db import Database
+from db.db import Database
 
 logger = get_logger(__name__)
 

@@ -69,3 +69,6 @@ def call_llm(provider, input_data: dict, call_name: str):
             exc_info=True,
         )
         return None, None
+
+
+# def add_llm_metrics(metrics: dict):

@@ -7,6 +7,7 @@ import os
 from common.logging import get_logger, configure_logging
 from pathlib import Path
 from config.settings import APP_ENV, LOG_LEVEL
+from db.db import Database
 
 # Configure logging
 configure_logging(env=APP_ENV, level=LOG_LEVEL)
@@ -28,7 +29,6 @@ from config.config import User_Input_Type
 from services.llm.llm_service import run_smart, run_stt
 
 from fastapi import Request
-
 
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
@@ -55,6 +55,14 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Application startup successfully: ready to receive messages")
+
+    # Initialize Database
+    try:
+        app.state.vector_db = Database()
+        logger.info("Vector Database initialized")
+    except Exception as e:
+        logger.critical("Failed to initialize Vector Database", extra={"error": str(e)})
+        raise
 
     try:
         yield
@@ -104,6 +112,21 @@ async def smart_branch(request: Request):
             return JSONResponse(status_code=400, content={"error": "Invalid payload format"})
 
         data = payload.get("data", {})
+        job_id = data.get("job_id")
+
+        job = app.state.vector_db.read_job(job_id)
+        if not job:
+            logger.error("Job not found", extra={"job_id": job_id})
+            return JSONResponse(status_code=404, content={"error": "Job not found"})
+
+        if job["status"] == "completed":
+            logger.warning("Job already completed", extra={"job_id": job_id})
+            return JSONResponse(status_code=400, content={"error": "Job already completed"})
+
+        if job["status"] == "failed":
+            logger.warning("Job already failed", extra={"job_id": job_id})
+            return JSONResponse(status_code=400, content={"error": "Job already failed"})
+
         gcs_audio_url = data.get("gcs_audio_url")
         input_text = data.get("input_text")
         note_id = data.get("note_id")
@@ -149,7 +172,11 @@ async def smart_branch(request: Request):
                 "Starting processing pipeline",
                 extra={"branch": "smart", "user_id": user_id, "note_id": note_id},
             )
-            response, metrics = run_smart(input_data)
+
+            # Retrieve vector_db from app state
+            vector_db = request.app.state.vector_db
+
+            response, metrics = run_smart(input_data, vector_db)
             logger.info(
                 "Processing pipeline completed", extra={"branch": "smart", "user_id": user_id}
             )
@@ -221,6 +248,21 @@ async def stt_branch(request: Request):
             return JSONResponse(status_code=400, content={"error": "Invalid payload format"})
 
         data = payload.get("data", {})
+        job_id = data.get("job_id")
+
+        job = app.state.vector_db.read_job(job_id)
+        if not job:
+            logger.error("Job not found", extra={"job_id": job_id})
+            return JSONResponse(status_code=404, content={"error": "Job not found"})
+
+        if job["status"] == "completed":
+            logger.warning("Job already completed", extra={"job_id": job_id})
+            return JSONResponse(status_code=400, content={"error": "Job already completed"})
+
+        if job["status"] == "failed":
+            logger.warning("Job already failed", extra={"job_id": job_id})
+            return JSONResponse(status_code=400, content={"error": "Job already failed"})
+
         gcs_audio_url = data.get("gcs_audio_url")
         input_text = data.get("input_text")
         note_id = data.get("note_id")
@@ -279,6 +321,25 @@ async def stt_branch(request: Request):
             )
             if response is None:
                 logger.warning("Empty response received from pipeline", extra={"branch": "stt"})
+
+            if metrics is None:
+                logger.warning("Empty metrics received from pipeline", extra={"branch": "stt"})
+            # else:
+            #     metrics_record = {
+            #         "job_id": job_id,
+            #         "user_id": user_id,
+            #         "audio_id": audio_id,
+            #         "pipeline_stage_id": pipeline_stage_id,
+            #         "llm_call": llm_call,
+            #         "input_tokens": input_tokens,
+            #         "prompt_tokens": prompt_tokens,
+            #         "total_input_tokens": total_input_tokens,
+            #         "output_tokens": output_tokens,
+            #         "thought_tokens": thought_tokens,
+            #         "confidence_score": confidence_score,
+            #         "elapsed_time": elapsed_time,
+            #     }
+            #     app.state.vector_db.write_metrics(metrics_record)
         except Exception as e:
             logger.critical(
                 "Critical error during processing",
