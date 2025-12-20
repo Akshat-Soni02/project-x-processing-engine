@@ -1,23 +1,68 @@
-# global logger configure file
+"""
+Centralized logging configuration for the Arilo Processing Engine.
+Supports JSON-structured logging for production and human-readable formatting with 'extra' fields for development.
+"""
 
 import logging
 import logging.config
 import os
+import json
 from typing import Optional
 
 try:
-    from pythonjsonlogger import jsonlogger  # type: ignore
-except Exception:
-    jsonlogger = None  # type: ignore
+    from pythonjsonlogger import jsonlogger
+except ImportError:
+    jsonlogger = None
 
 __all__ = ("configure_logging", "get_logger")
 
 
+class ReadableExtraFormatter(logging.Formatter):
+    """
+    Custom formatter that appends 'extra' contextual data to the end of log lines.
+    Useful for development where structured JSON is hard to read but data is needed.
+    """
+
+    def format(self, record):
+        standard_attrs = (
+            "args",
+            "asctime",
+            "created",
+            "exc_info",
+            "exc_text",
+            "filename",
+            "funcName",
+            "levelname",
+            "levelno",
+            "lineno",
+            "module",
+            "msecs",
+            "msg",
+            "name",
+            "pathname",
+            "process",
+            "processName",
+            "relativeCreated",
+            "stack_info",
+            "thread",
+            "threadName",
+        )
+        extras = {k: v for k, v in record.__dict__.items() if k not in standard_attrs}
+
+        line = super().format(record)
+
+        if extras:
+            line = f"{line} | {json.dumps(extras)}"
+        return line
+
+
 def _env() -> str:
+    """Detect the current application environment."""
     return (os.getenv("APP_ENV") or os.getenv("ENV") or "development").lower()
 
 
 def _level() -> str:
+    """Detect the default logging level."""
     return (os.getenv("LOG_LEVEL") or "INFO").upper()
 
 
@@ -25,12 +70,12 @@ def configure_logging(
     env: Optional[str] = None, level: Optional[str] = None, force: bool = False
 ) -> None:
     """
-    Configure global logging.
+    Initialize global logging configuration using dictConfig.
 
-    - env: "production"/"prod" enables JSON-style logs (if python-json-logger present),
-           otherwise human-readable console logs are used.
-    - level: standard logging level name (DEBUG, INFO, ...).
-    - force: if True, reconfigure even if handlers already exist.
+    Args:
+        env (str, optional): Target environment ('production' enables JSON).
+        level (str, optional): Logging level (DEBUG, INFO, etc.).
+        force (bool): If True, reconfigures even if handlers exist.
     """
     env = (env or _env()).lower()
     level = (level or _level()).upper()
@@ -54,6 +99,7 @@ def configure_logging(
             formatter_name = "plain"
     else:
         fmt = {
+            "()": ReadableExtraFormatter,
             "format": "%(asctime)s %(levelname)s [%(name)s] %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         }
@@ -78,7 +124,14 @@ def configure_logging(
 
 
 def get_logger(name: Optional[str] = None) -> logging.Logger:
-    """Return a logger; ensure logging is configured with defaults on first use."""
+    """
+    Retrieve a named logger instance, ensuring logging is configured.
+    Args:
+        name (str, optional): Name for the logger, typically __name__.
+
+    Returns:
+        logging.Logger: Configured logger instance.
+    """
     if not logging.getLogger().handlers:
         configure_logging()
     return logging.getLogger(name)

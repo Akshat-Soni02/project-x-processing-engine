@@ -1,6 +1,6 @@
 """
 Context preparation utilities for smart branch processing.
-Handles vector database operations and context formatting (stateless).
+Handles vector database operations and formatting for contextually-aware LLM generation.
 """
 
 from common.logging import get_logger
@@ -11,20 +11,19 @@ logger = get_logger(__name__)
 
 def prepare_context_for_noteback(context_response: dict, vector_db: Database) -> list:
     """
-    Perform similarity search on context response for noteback processing.
+    Perform multi-anchor similarity search using context preparation output.
 
     Args:
-        context_response: Response from context preparation LLM call
-        vector_db: Initialized Database instance
+        context_response (dict): Parsed JSON response from context LLM.
+        vector_db (Database): Initialized vector database instance.
 
     Returns:
-        List of similarity context strings (empty list on error)
+        list: List of formatted similarity context strings for prompting.
     """
-    logger.debug("Preparing noteback similarity context...")
+    logger.debug("Preparing noteback similarity context")
 
-    # Validate inputs
     if context_response is None or not isinstance(context_response, dict):
-        logger.error("Invalid context response - must be a dict")
+        logger.error("Invalid context response format: Expected dict")
         return []
 
     if vector_db is None:
@@ -38,35 +37,35 @@ def prepare_context_for_noteback(context_response: dict, vector_db: Database) ->
         return []
 
     if not isinstance(search_anchors, list):
-        logger.error(f"Invalid search_anchors type: {type(search_anchors).__name__}, expected list")
+        logger.error(
+            "Invalid search_anchors format: Expected list",
+            extra={"type": type(search_anchors).__name__},
+        )
         return []
 
-    logger.info(f"Processing {len(search_anchors)} search anchors for similarity search")
     similarity_context = []
     total_query_chars = 0
     failed_anchors = 0
 
     for idx, anchor in enumerate(search_anchors, 1):
         try:
-            # Validate anchor
             if anchor is None or not isinstance(anchor, str):
                 logger.warning(
-                    f"[Anchor {idx}] Invalid anchor type: {type(anchor).__name__}, skipping"
+                    "Invalid anchor type", extra={"index": idx, "type": type(anchor).__name__}
                 )
                 failed_anchors += 1
                 continue
 
-            anchor_preview = anchor[:50] + "..." if len(anchor) > 50 else anchor
-            logger.debug(f"[Anchor {idx}/{len(search_anchors)}] Searching: {anchor_preview}")
+            logger.debug(
+                "Searching similarity anchor", extra={"index": idx, "total": len(search_anchors)}
+            )
 
             results, chars_used = vector_db.similarity_search(user_id="123", query=anchor, top_k=3)
             total_query_chars += chars_used
 
             if results is None:
-                logger.warning(f"[Anchor {idx}] No results from similarity search")
+                logger.warning("No results from similarity search for anchor", extra={"index": idx})
                 continue
-
-            logger.debug(f"[Anchor {idx}] Found {len(results)} similar sentences")
 
             for item in results:
                 try:
@@ -75,43 +74,50 @@ def prepare_context_for_noteback(context_response: dict, vector_db: Database) ->
                         or "sentence_text" not in item
                         or "combined_score" not in item
                     ):
-                        logger.warning(f"[Anchor {idx}] Invalid result item structure, skipping")
+                        logger.warning("Invalid result item structure", extra={"index": idx})
                         continue
 
                     formatted = f"sentence_text: {item['sentence_text']}, value_score: {item['combined_score']}"
                     similarity_context.append(formatted)
-                    logger.debug(f"[Anchor {idx}] Added score={item['combined_score']:.4f}")
                 except Exception as e:
-                    logger.warning(f"[Anchor {idx}] Failed to process result item: {str(e)}")
+                    logger.warning(
+                        "Failed to process result item", extra={"index": idx, "error": str(e)}
+                    )
                     continue
 
         except Exception as e:
-            logger.error(f"[Anchor {idx}] Similarity search failed: {str(e)}", exc_info=True)
+            logger.error(
+                "Similarity search failed", extra={"index": idx, "error": str(e)}, exc_info=True
+            )
             failed_anchors += 1
             continue
 
     if failed_anchors > 0:
-        logger.warning(f"Failed to process {failed_anchors}/{len(search_anchors)} anchors")
+        logger.warning(
+            "Failed to process some search anchors",
+            extra={"failed": failed_anchors, "total": len(search_anchors)},
+        )
 
-    logger.info(f"✓ Prepared {len(similarity_context)} similarity context items")
+    logger.debug(
+        "Similarity context preparation completed", extra={"count": len(similarity_context)}
+    )
     return similarity_context
 
 
 def format_sentences(context_response: dict) -> list:
     """
-    Extract sentences from context response and format for noteback context.
+    Extract and format current note sentences with importance scores.
 
     Args:
-        context_response: Response dict from context preparation
+        context_response (dict): Response dict from context preparation.
 
     Returns:
-        List of formatted sentence strings (empty list on error)
+        list: Formatted sentence strings including importance metrics.
     """
-    logger.debug("Processing and formatting note sentences...")
+    logger.debug("Formatting note sentences")
 
-    # Validate input
     if context_response is None or not isinstance(context_response, dict):
-        logger.error("Invalid context response - must be a dict")
+        logger.error("Invalid context response format: Expected dict")
         return []
 
     sentences_data = context_response.get("input_to_sentences", [])
@@ -121,7 +127,10 @@ def format_sentences(context_response: dict) -> list:
         return []
 
     if not isinstance(sentences_data, list):
-        logger.error(f"Invalid sentences_data type: {type(sentences_data).__name__}, expected list")
+        logger.error(
+            "Invalid sentences_data format: Expected list",
+            extra={"type": type(sentences_data).__name__},
+        )
         return []
 
     formatted_sentences = []
@@ -129,18 +138,15 @@ def format_sentences(context_response: dict) -> list:
 
     for idx, entry in enumerate(sentences_data, 1):
         try:
-            # Validate entry
             if entry is None or not isinstance(entry, dict):
                 logger.warning(
-                    f"[Sentence {idx}] Invalid entry type: {type(entry).__name__}, skipping"
+                    "Invalid entry type", extra={"index": idx, "type": type(entry).__name__}
                 )
                 failed_sentences += 1
                 continue
 
             if "sentence" not in entry or "importance_score" not in entry:
-                logger.warning(
-                    f"[Sentence {idx}] Missing required fields (sentence, importance_score)"
-                )
+                logger.warning("Missing required fields in sentence entry", extra={"index": idx})
                 failed_sentences += 1
                 continue
 
@@ -149,31 +155,37 @@ def format_sentences(context_response: dict) -> list:
 
             if not isinstance(sentence_text, str):
                 logger.warning(
-                    f"[Sentence {idx}] Invalid sentence type: {type(sentence_text).__name__}"
+                    "Invalid sentence text type",
+                    extra={"index": idx, "type": type(sentence_text).__name__},
                 )
                 failed_sentences += 1
                 continue
 
             if not isinstance(importance_score, (int, float)):
                 logger.warning(
-                    f"[Sentence {idx}] Invalid importance_score type: {type(importance_score).__name__}"
+                    "Invalid importance_score type",
+                    extra={"index": idx, "type": type(importance_score).__name__},
                 )
                 failed_sentences += 1
                 continue
 
             formatted = f"{sentence_text}, importance_score: {importance_score:.2f}"
             formatted_sentences.append(formatted)
-            logger.debug(f"[Sentence {idx}] Importance: {importance_score:.2f}")
 
         except Exception as e:
-            logger.error(f"[Sentence {idx}] Failed to format sentence: {str(e)}", exc_info=True)
+            logger.error(
+                "Failed to format sentence", extra={"index": idx, "error": str(e)}, exc_info=True
+            )
             failed_sentences += 1
             continue
 
     if failed_sentences > 0:
-        logger.warning(f"Failed to format {failed_sentences}/{len(sentences_data)} sentences")
+        logger.warning(
+            "Failed to format some sentences",
+            extra={"failed": failed_sentences, "total": len(sentences_data)},
+        )
 
-    logger.info(f"✓ Formatted {len(formatted_sentences)} sentences for noteback context")
+    logger.debug("Sentence formatting completed", extra={"count": len(formatted_sentences)})
     return formatted_sentences
 
 

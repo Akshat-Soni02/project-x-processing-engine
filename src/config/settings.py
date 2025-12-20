@@ -1,3 +1,8 @@
+"""
+Application-wide settings and environment variable management.
+Loads configuration from .env and validates presence of critical variables.
+"""
+
 import os
 from dotenv import load_dotenv
 

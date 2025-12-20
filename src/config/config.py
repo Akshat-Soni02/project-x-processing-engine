@@ -1,3 +1,8 @@
+"""
+Configuration constants and enums for LLM execution.
+Defines model IDs, input types, and file paths for prompts and schemas.
+"""
+
 from enum import Enum
 
 

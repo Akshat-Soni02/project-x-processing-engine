@@ -1,54 +1,77 @@
 """
-Gemini LLM Provider Implementation
-Stateless wrapper for Google Gemini API interactions via Vertex AI
+Gemini LLM Provider Implementation.
+Stateless wrapper for Google Gemini API interactions via Vertex AI.
 """
 
-from google import genai
-from google.genai import types
-from common.logging import get_logger
 import time
 import json
 import math
+from google import genai
+from google.genai import types
+from common.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 class GeminiProvider:
     """
-    Stateless Gemini provider.
-    All state is passed in, client is reused.
+    Stateless Gemini provider for handling LLM interactions.
+    Maintains no conversation state; all context is passed per-request.
     """
 
     def __init__(self, client: genai.Client):
         """
-        Initialize with an existing Gemini client.
+        Initialize the provider with an existing Gemini client.
 
         Args:
-            client: Pre-initialized genai.Client instance
+            client (genai.Client): Pre-initialized Google GenAI client instance.
         """
         self.client = client
         self.log_prob = 1
-        logger.debug("GeminiProvider initialized with client")
-
-    # ==================== Helper Methods ====================
+        logger.debug("Provider initialized")
 
     def content_builder(self, parts: list) -> list:
-        """Build content structure for Gemini API."""
+        """
+        Build the content structure for Gemini API calls.
+
+        Args:
+            parts (list): List of content parts (text, bytes, etc.).
+
+        Returns:
+            list: List containing the Content object.
+        """
         contents = [types.Content(role="user", parts=parts)]
         return contents
 
     def count_tokens(self, part, model: str) -> int:
-        """Count tokens for a given part and model."""
+        """
+        Calculate the token count for a specific part and model.
+
+        Args:
+            part: The content part to count.
+            model (str): The model ID to use for tokenization.
+
+        Returns:
+            int: Total token count.
+        """
         try:
             contents = self.content_builder([part])
             count_response = self.client.models.count_tokens(model=model, contents=contents)
             return count_response.total_tokens
         except Exception as e:
-            logger.error(f"Error extracting token counts: {e}")
+            logger.error("Failed to count tokens", extra={"error": str(e)})
             return 0
 
     def get_postcall_tokens(self, response) -> tuple:
-        """Extract output and thought tokens from response."""
+        """
+        Extract usage metrics from the API response.
+
+        Args:
+            response: The Gemini API response object.
+
+        Returns:
+            tuple: (output_tokens, thought_tokens)
+        """
         try:
             thought_tokens = 0
             if response.usage_metadata.thoughts_token_count:
@@ -57,30 +80,46 @@ class GeminiProvider:
             output_tokens = response.usage_metadata.candidates_token_count
             return output_tokens, thought_tokens
         except Exception as e:
-            logger.error(f"Error extracting postcall token counts: {e}")
+            logger.error("Failed to extract post-call tokens", extra={"error": str(e)})
             return 0, 0
 
     def get_avg_logprob(self, response) -> float:
-        """Extract average log probability from response."""
+        """
+        Extract the average log probability from the API response.
+
+        Args:
+            response: The Gemini API response object.
+
+        Returns:
+            float: Average log probability value.
+        """
         if not (response.candidates and response.candidates[0].logprobs_result):
-            logger.warning("No logprobs result found in response")
+            logger.warning("Logprobs result missing in response")
             return 0
 
         try:
             average_logprob = response.candidates[0].avg_logprobs
             return average_logprob
         except Exception as e:
-            logger.error(f"Error calculating average log probability: {e}")
+            logger.error("Failed to calculate average log probability", extra={"error": str(e)})
             return 0
 
     def get_confidence_score(self, avg_logprob: float) -> float:
-        """Calculate confidence score from log probability."""
+        """
+        Convert log probability to a 0-1 confidence score.
+
+        Args:
+            avg_logprob (float): Average log probability.
+
+        Returns:
+            float: Exponentially mapped confidence score.
+        """
         if avg_logprob is None:
             return None
         try:
             return math.exp(avg_logprob)
         except (TypeError, ValueError) as e:
-            logger.error(f"Error calculating confidence score: {e}")
+            logger.error("Failed to calculate confidence score", extra={"error": str(e)})
             return 0
 
     def config_builder(
@@ -91,7 +130,19 @@ class GeminiProvider:
         si_text: str,
         response_schema=None,
     ):
-        """Build Gemini generation config."""
+        """
+        Construct the generation configuration for Gemini.
+
+        Args:
+            temperature (float): Sampling temperature.
+            top_p (float): Nucleus sampling parameter.
+            token_limit (int): Maximum output tokens.
+            si_text (str): System instruction text.
+            response_schema (dict, optional): JSON schema for structured output.
+
+        Returns:
+            types.GenerateContentConfig: Fully constructed config object.
+        """
         safety_settings = [
             types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
             types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
@@ -116,13 +167,24 @@ class GeminiProvider:
             config_params["response_logprobs"] = True
             config_params["logprobs"] = self.log_prob
 
-        generate_content_config = types.GenerateContentConfig(**config_params)
-        return generate_content_config
+        return types.GenerateContentConfig(**config_params)
 
     def calculate_metrics(
         self, input_part, prompt_part, elapsed_time, response, model: str
     ) -> dict:
-        """Calculate comprehensive metrics for the LLM call."""
+        """
+        Calculate execution metrics including token counts and confidence scores.
+
+        Args:
+            input_part: The raw input part (audio/text).
+            prompt_part: The formatted prompt part.
+            elapsed_time (float): Time taken for the API call in seconds.
+            response: Gemini response object.
+            model (str): Model name used.
+
+        Returns:
+            dict: Comprehensive metrics dictionary.
+        """
         token_count_error = None
 
         if input_part is None:
@@ -159,36 +221,35 @@ class GeminiProvider:
         }
         return metrics
 
-    # ==================== Main Process Method ====================
-
     def process(self, input_data: dict, temperature: float = 0.2, top_p: float = 0.8) -> tuple:
         """
-        Process a single LLM request (stateless).
+        Process a single LLM request statelessly.
 
         Args:
-            input_data: Dict with model, prompt, system_instruction, etc.
-            temperature: Sampling temperature
-            top_p: Nucleus sampling parameter
+            input_data (dict): Dictionary containing model, prompt, system_instruction, etc.
+            temperature (float, optional): Sampling temperature. Defaults to 0.2.
+            top_p (float, optional): Nucleus sampling. Defaults to 0.8.
 
         Returns:
-            Tuple of (response_json, metrics)
+            Tuple[dict, dict]: (response_json, metrics_dict).
         """
         model = input_data.get("model")
         token_limit = input_data.get("token_limit")
         prompt = input_data.get("prompt", None)
         system_instruction = input_data.get("system_instruction")
         response_schema = input_data.get("response_schema")
-
         input_type = input_data.get("input_type", None)
 
         if model is None or prompt is None or token_limit is None or system_instruction is None:
-            logger.warning("Cannot process llm request, missing required fields")
-            logger.warning(model)
-            logger.warning(prompt)
-            logger.warning(token_limit)
-            logger.warning(system_instruction)
-            logger.warning(response_schema)
-            logger.warning(input_type)
+            logger.warning(
+                "Request missing required fields",
+                extra={
+                    "model": model,
+                    "token_limit": token_limit,
+                    "prompt_preview": prompt[:20] if prompt else None,
+                    "si_preview": system_instruction[:20] if system_instruction else None,
+                },
+            )
             raise ValueError("Missing required fields")
 
         content_part = None
@@ -225,7 +286,7 @@ class GeminiProvider:
                 config=config,
             )
         except Exception as e:
-            logger.error(f"Error generating content with Gemini: {e}")
+            logger.critical("Gemini content generation failed", extra={"error": str(e)})
             return None, {}
 
         end_time = time.time()

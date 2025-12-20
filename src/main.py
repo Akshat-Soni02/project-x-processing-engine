@@ -1,20 +1,25 @@
+"""
+Main entry point for the Arilo Processing Engine FastAPI application.
+Handles Pub/Sub push subscriptions for STT and SMART processing branches.
+"""
+
 import os
 from common.logging import get_logger, configure_logging
 from pathlib import Path
 from config.settings import APP_ENV, LOG_LEVEL
 
+# Configure logging
 configure_logging(env=APP_ENV, level=LOG_LEVEL)
 logger = get_logger(__name__)
 
+# Credentials configuration
 project_root = Path(__file__).parent.parent
 cred_path = project_root / "llm_credentials.json"
 if cred_path.exists():
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(cred_path)
-    logger.info("Set GOOGLE_APPLICATION_CREDENTIALS from local file.")
+    logger.debug("Application credentials loaded from local file")
 else:
-    logger.warning(
-        "credentials.json not found; relying on Application Default Credentials or gcloud config."
-    )
+    logger.warning("Application credentials file not found")
 
 import base64
 import json
@@ -39,27 +44,25 @@ listener_futures: Dict[str, Optional[Any]] = {"stt": None, "smart": None}
 # vertexai.init(project=Project.PROJECT_ID, location=Project.LOCATION)
 
 
-logger.info("Initialized STT, Smart, and Noteback providers")
-logger.info("Initialized Vector Database")
+logger.debug("Services initialized")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Manage application lifecycle (startup/shutdown).
-    Using push subscriptions - no listeners needed in the app.
+    Resets or initializes global resources if required.
     """
     # Startup
-    logger.info("Application startup: ready to receive push subscription messages")
+    logger.info("Application startup successfully: ready to receive messages")
 
     try:
         yield
-
-        # Shutdown
         logger.info("Application shutdown")
-
     except Exception as e:
-        logger.critical(f"Critical error during startup/shutdown: {e}", exc_info=True)
+        logger.critical(
+            "Error during application lifecycle", extra={"error": str(e)}, exc_info=True
+        )
         raise
 
 
@@ -80,28 +83,26 @@ async def smart_branch(request: Request):
     try:
         envelope = await request.json()
     except Exception as e:
-        logger.error(f"Failed to parse request JSON: {e}")
+        logger.error("Failed to parse request JSON", extra={"error": str(e)})
         return JSONResponse(status_code=400, content={"error": "Invalid JSON format"})
 
     if not envelope or "message" not in envelope:
-        logger.error("Received an invalid Pub/Sub message format.")
+        logger.warning("Invalid Pub/Sub message format")
         return JSONResponse(status_code=400, content={"error": "Invalid Pub/Sub message format"})
 
     try:
         message_data = envelope["message"].get("data")
         if not message_data:
-            logger.error("Message data is missing")
+            logger.warning("Message data is missing in Pub/Sub envelope")
             return JSONResponse(status_code=400, content={"error": "Message data is missing"})
 
-        # Decode base64 message
         try:
             message_payload_str = base64.b64decode(message_data).decode("utf-8")
             payload = json.loads(message_payload_str)
         except (ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to decode message: {e}")
+            logger.error("Failed to decode message payload", extra={"error": str(e)})
             return JSONResponse(status_code=400, content={"error": "Invalid payload format"})
 
-        # Extract data from payload
         data = payload.get("data", {})
         gcs_audio_url = data.get("gcs_audio_url")
         input_text = data.get("input_text")
@@ -112,58 +113,63 @@ async def smart_branch(request: Request):
         input_type = data.get("input_type")
 
         logger.debug(
-            "Processing SMART branch message",
-            extra={
-                "note_id": note_id,
-                "user_id": user_id,
-                "input_type": input_type,
-            },
+            "Processing request", extra={"note_id": note_id, "user_id": user_id, "branch": "smart"}
         )
 
-        # Get input data based on type
         input_data = None
         try:
             if input_type == User_Input_Type.AUDIO_WAV:
                 if not gcs_audio_url:
-                    logger.error("GCS audio URL is required for AUDIO_WAV input type")
+                    logger.error("Audio URL required for this input type")
                     return JSONResponse(
                         status_code=400, content={"error": "GCS audio URL required"}
                     )
                 input_data = get_input_data(gcs_audio_url)
                 if not input_data:
-                    logger.error(f"Failed to fetch audio data from {gcs_audio_url}")
+                    logger.error("Failed to fetch audio data", extra={"url": gcs_audio_url})
                     return JSONResponse(
                         status_code=400, content={"error": "Failed to fetch audio data"}
                     )
-
             elif input_type == User_Input_Type.TEXT_PLAIN:
                 if not input_text:
-                    logger.error("Input text is required for TEXT_PLAIN input type")
+                    logger.error("Input text required for this input type")
                     return JSONResponse(status_code=400, content={"error": "Input text required"})
                 input_data = input_text
             else:
-                logger.error(f"Unknown input type: {input_type}")
+                logger.error("Unsupported input type", extra={"input_type": input_type})
                 return JSONResponse(
                     status_code=400, content={"error": f"Unknown input type: {input_type}"}
                 )
         except Exception as e:
-            logger.error(f"Error preparing input data: {e}", exc_info=True)
+            logger.error("Error preparing input data", extra={"error": str(e)}, exc_info=True)
             return JSONResponse(status_code=500, content={"error": "Failed to prepare input data"})
 
-        # Call run_smart
         try:
+            logger.info(
+                "Starting processing pipeline",
+                extra={"branch": "smart", "user_id": user_id, "note_id": note_id},
+            )
             response, metrics = run_smart(input_data)
             logger.info(
-                f"[SMART] Processing completed. Response: {response is not None}, Metrics: {metrics is not None}"
+                "Processing pipeline completed", extra={"branch": "smart", "user_id": user_id}
             )
-
+            logger.debug(
+                "Pipeline output metrics",
+                extra={
+                    "response_present": response is not None,
+                    "metrics_present": metrics is not None,
+                },
+            )
             if response is None:
-                logger.warning("[SMART] Received None response from run_smart")
+                logger.warning("Empty response received from pipeline", extra={"branch": "smart"})
         except Exception as e:
-            logger.error(f"[SMART] Error during processing: {e}", exc_info=True)
+            logger.critical(
+                "Critical error during processing",
+                extra={"error": str(e), "branch": "smart"},
+                exc_info=True,
+            )
             response, metrics = None, None
 
-        # Prepare upstream output
         upstream_output = {
             "note_id": note_id,
             "user_id": user_id,
@@ -173,20 +179,15 @@ async def smart_branch(request: Request):
             "branch": "smart",
             "metrics": metrics,
         }
-
-        logger.debug(f"Upstream output: {upstream_output}")
-
-        # Send upstream
-        # try:
-        #     response = await upstream_call(upstream_output)
-        #     logger.info("[SMART] Sent output upstream: {response}")
-        # except Exception as e:
-        #     logger.error(f"[SMART] Failed to send upstream: {e}", exc_info=True)
-
+        logger.debug("Request details", extra={"output": upstream_output})
         return JSONResponse(status_code=200, content={"status": "ok", "branch": "smart"})
 
     except Exception as e:
-        logger.error(f"[SMART] Unexpected error: {e}", exc_info=True)
+        logger.critical(
+            "Unexpected error in request handler",
+            extra={"error": str(e), "branch": "smart"},
+            exc_info=True,
+        )
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
@@ -199,28 +200,26 @@ async def stt_branch(request: Request):
     try:
         envelope = await request.json()
     except Exception as e:
-        logger.error(f"Failed to parse request JSON: {e}")
+        logger.error("Failed to parse request JSON", extra={"error": str(e)})
         return JSONResponse(status_code=400, content={"error": "Invalid JSON format"})
 
     if not envelope or "message" not in envelope:
-        logger.error("Received an invalid Pub/Sub message format.")
+        logger.warning("Invalid Pub/Sub message format")
         return JSONResponse(status_code=400, content={"error": "Invalid Pub/Sub message format"})
 
     try:
         message_data = envelope["message"].get("data")
         if not message_data:
-            logger.error("Message data is missing")
+            logger.warning("Message data is missing in Pub/Sub envelope")
             return JSONResponse(status_code=400, content={"error": "Message data is missing"})
 
-        # Decode base64 message
         try:
             message_payload_str = base64.b64decode(message_data).decode("utf-8")
             payload = json.loads(message_payload_str)
         except (ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to decode message: {e}")
+            logger.error("Failed to decode message payload", extra={"error": str(e)})
             return JSONResponse(status_code=400, content={"error": "Invalid payload format"})
 
-        # Extract data from payload
         data = payload.get("data", {})
         gcs_audio_url = data.get("gcs_audio_url")
         input_text = data.get("input_text")
@@ -231,58 +230,63 @@ async def stt_branch(request: Request):
         input_type = data.get("input_type")
 
         logger.debug(
-            "Processing STT branch message",
-            extra={
-                "note_id": note_id,
-                "user_id": user_id,
-                "input_type": input_type,
-            },
+            "Processing request", extra={"note_id": note_id, "user_id": user_id, "branch": "stt"}
         )
 
-        # Get input data based on type
         input_data = None
         try:
             if input_type == User_Input_Type.AUDIO_WAV:
                 if not gcs_audio_url:
-                    logger.error("GCS audio URL is required for AUDIO_WAV input type")
+                    logger.warning("Audio URL missing for this input type")
                     return JSONResponse(
                         status_code=400, content={"error": "GCS audio URL required"}
                     )
                 input_data = get_input_data(gcs_audio_url)
                 if not input_data:
-                    logger.error(f"Failed to fetch audio data from {gcs_audio_url}")
+                    logger.error("Failed to fetch audio data", extra={"url": gcs_audio_url})
                     return JSONResponse(
                         status_code=400, content={"error": "Failed to fetch audio data"}
                     )
-
             elif input_type == User_Input_Type.TEXT_PLAIN:
                 if not input_text:
-                    logger.error("Input text is required for TEXT_PLAIN input type")
+                    logger.warning("Input text missing for this input type")
                     return JSONResponse(status_code=400, content={"error": "Input text required"})
                 input_data = input_text
             else:
-                logger.error(f"Unknown input type: {input_type}")
+                logger.warning("Unsupported input type", extra={"input_type": input_type})
                 return JSONResponse(
                     status_code=400, content={"error": f"Unknown input type: {input_type}"}
                 )
         except Exception as e:
-            logger.error(f"Error preparing input data: {e}", exc_info=True)
+            logger.error("Error preparing input data", extra={"error": str(e)}, exc_info=True)
             return JSONResponse(status_code=500, content={"error": "Failed to prepare input data"})
 
-        # Call run_stt
         try:
+            logger.info(
+                "Starting processing pipeline",
+                extra={"branch": "stt", "user_id": user_id, "note_id": note_id},
+            )
             response, metrics = run_stt(input_data)
             logger.info(
-                f"[STT] Processing completed. Response: {response is not None}, Metrics: {metrics is not None}"
+                "Processing pipeline completed", extra={"branch": "stt", "user_id": user_id}
             )
-
+            logger.debug(
+                "Pipeline output metrics",
+                extra={
+                    "response_present": response is not None,
+                    "metrics_present": metrics is not None,
+                },
+            )
             if response is None:
-                logger.warning("[STT] Received None response from run_stt")
+                logger.warning("Empty response received from pipeline", extra={"branch": "stt"})
         except Exception as e:
-            logger.error(f"[STT] Error during processing: {e}", exc_info=True)
+            logger.critical(
+                "Critical error during processing",
+                extra={"error": str(e), "branch": "stt"},
+                exc_info=True,
+            )
             response, metrics = None, None
 
-        # Prepare upstream output
         upstream_output = {
             "note_id": note_id,
             "user_id": user_id,
@@ -292,32 +296,25 @@ async def stt_branch(request: Request):
             "branch": "stt",
             "metrics": metrics,
         }
-
-        logger.debug(f"Upstream output: {upstream_output}")
-
-        # Send upstream
-        # try:
-        #     response = await upstream_call(upstream_output)
-        #     logger.info(f"[STT] Sent output upstream: {response}")
-        # except Exception as e:
-        #     logger.error(f"[STT] Failed to send upstream: {e}", exc_info=True)
-
+        logger.debug("Request details", extra={"output": upstream_output})
         return JSONResponse(status_code=200, content={"status": "ok", "branch": "stt"})
 
     except Exception as e:
-        logger.error(f"[STT] Unexpected error: {e}", exc_info=True)
+        logger.critical(
+            "Unexpected error in request handler",
+            extra={"error": str(e), "branch": "stt"},
+            exc_info=True,
+        )
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
-# Server health check endpoint
 @app.get("/health")
 def health():
-    logger.info("Health check working")
     return {"status": "ok"}
 
 
 @app.post("/processed-output")
 async def upstream_call(request: Request):
     data = await request.json()
-    logger.info(f"Upstream call working: {data}")
+    logger.debug("Upstream processed output received", extra={"data": data})
     return {"status": "ok"}

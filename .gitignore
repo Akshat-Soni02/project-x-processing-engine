@@ -9,7 +9,7 @@ test.wav
 *.py[cod]
 
 # Python cache directories
-*__pycache__/*
+__pycache__/
 project_x_processing_engine.egg-info
 
 # Virtual environments

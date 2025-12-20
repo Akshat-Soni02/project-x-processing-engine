@@ -1,15 +1,27 @@
+"""
+Vector database interface for storing and searching note embeddings.
+Uses PostgreSQL with pgvector for efficient similarity search and context retrieval.
+"""
+
 import psycopg
+from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 from config.settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 from common.logging import get_logger
-from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 
 logger = get_logger(__name__)
 
 
-# TODO migrate the module from vertexai.language_models to google-genai as its depricating
+# TODO: Migrate module from vertexai.language_models to google-genai
 class Database:
+    """
+    Handles connection and operations with the vector database.
+    Provides methods for embedding generation, data insertion, and similarity search.
+    """
+
     def __init__(self):
-        """Initialize database connection."""
+        """
+        Establish connection to the PostgreSQL database and initialize the embedding model.
+        """
         self.conn = psycopg.connect(
             dbname=DB_NAME,
             user=DB_USER,
@@ -19,20 +31,32 @@ class Database:
         )
         self.conn.autocommit = True
         self.cursor = self.conn.cursor()
-        logger.info("Database connection established.")
+        logger.debug("Database connection established")
 
         self.embedding_model = TextEmbeddingModel.from_pretrained("gemini-embedding-001")
         self.embedding_dimensionality = 1536
 
     def __del__(self):
-        """Close database connection."""
-        self.cursor.close()
-        self.conn.close()
-        logger.info("Database connection closed.")
+        """
+        Gracefully close the database connection on object destruction.
+        """
+        try:
+            self.cursor.close()
+            self.conn.close()
+            logger.debug("Database connection closed")
+        except Exception:
+            pass
 
-    def _generate_query_embedding(self, text: str) -> list[float]:
-        """Generate embedding for the given text using an embedding model."""
+    def _generate_query_embedding(self, text: str) -> tuple[list[float], int]:
+        """
+        Generate an embedding for a search query.
 
+        Args:
+            text (str): Query text.
+
+        Returns:
+            tuple: (embedding_values, char_count)
+        """
         dimensionality = self.embedding_dimensionality
         task = "RETRIEVAL_QUERY"
         model = self.embedding_model
@@ -44,12 +68,19 @@ class Database:
             )
         else:
             embedding_response = model.get_embeddings([text_input])
-        char_count = len(text)
-        return embedding_response[0].values, char_count
 
-    def _generate_sentence_embedding(self, sentence: str) -> list[float]:
-        """Generate embedding for a sentence using an embedding model."""
+        return embedding_response[0].values, len(text)
 
+    def _generate_sentence_embedding(self, sentence: str) -> tuple[list[float], int]:
+        """
+        Generate an embedding for a document sentence.
+
+        Args:
+            sentence (str): Sentence text.
+
+        Returns:
+            tuple: (embedding_values, char_count)
+        """
         dimensionality = self.embedding_dimensionality
         task = "RETRIEVAL_DOCUMENT"
         model = self.embedding_model
@@ -61,13 +92,21 @@ class Database:
             )
         else:
             embedding_response = model.get_embeddings([text_input])
-        char_count = len(sentence)
-        return embedding_response[0].values, char_count
 
-    # based on current Arch, this does not belong here
-    def insert_sentences(self, user_id: str, note_id: str, sentences: list[dict]):
-        """Insert sentences with embeddings into the database"""
+        return embedding_response[0].values, len(sentence)
 
+    def insert_sentences(self, user_id: str, note_id: str, sentences: list[dict]) -> int:
+        """
+        Insert multiple sentences with their embeddings into the database.
+
+        Args:
+            user_id (str): ID of the user owning the note.
+            note_id (str): ID of the note.
+            sentences (list[dict]): List of dictionaries containing sentence text and metadata.
+
+        Returns:
+            int: Total characters processed for billing/tracking purposes.
+        """
         insert_query = """
         INSERT INTO user_notes (user_id, note_id, sentence_index, sentence_text, embedding, language, importance_score)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -93,13 +132,24 @@ class Database:
                     importance_score,
                 ),
             )
-        logger.info(
-            f"Inserted {len(sentences)} sentences for user_id={user_id}, note_id={note_id}."
+        logger.debug(
+            "Sentences inserted into database",
+            extra={"count": len(sentences), "user_id": user_id, "note_id": note_id},
         )
         return total_chars
 
-    def similarity_search(self, user_id: str, query: str, top_k: int = 5) -> list[dict]:
-        """Perform multi-factor similarity search considering similarity, importance, and recency."""
+    def similarity_search(self, user_id: str, query: str, top_k: int = 5) -> tuple[list[dict], int]:
+        """
+        Perform a hybrid similarity search considering distance, importance, and recency.
+
+        Args:
+            user_id (str): User ID context.
+            query (str): Search query text.
+            top_k (int): Number of top results to return.
+
+        Returns:
+            tuple: (List of result dictionaries, query character count)
+        """
         query_embedding, query_chars = self._generate_query_embedding(query)
 
         search_query = """
@@ -127,8 +177,8 @@ class Database:
             rn.importance_score,
             rn.ts_epoch,
             (1 / (1 + rn.distance)) * 0.6 +
-            (rn.importance_score / s.max_importance) * 0.2 +
-            ((rn.ts_epoch - s.min_ts) / (s.max_ts - s.min_ts)) * 0.2 AS combined_score
+            (rn.importance_score / NULLIF(s.max_importance, 0)) * 0.2 +
+            ((rn.ts_epoch - s.min_ts) / NULLIF(s.max_ts - s.min_ts, 0)) * 0.2 AS combined_score
         FROM ranked_notes rn
         CROSS JOIN stats s
         ORDER BY combined_score DESC
@@ -149,74 +199,95 @@ class Database:
             }
             for row in results
         ]
-        logger.info(
-            f"Performed multi-factor similarity search for user_id={user_id} with query='{query}'."
+        logger.debug(
+            "Similarity search performed", extra={"user_id": user_id, "query_preview": query[:50]}
         )
         return similar_sentences, query_chars
 
-    def get_sentence(self, filter) -> dict:
-        user_id = filter.get("user_id", None)
-        note_id = filter.get("note_id", None)
-        sentence_index = filter.get("sentence_index", None)
+    def get_sentence(self, filter_params: dict) -> dict:
+        """
+        Retrieve a specific sentence or set of sentences based on filters.
+
+        Args:
+            filter_params (dict): Filters (user_id Required, note_id, sentence_index).
+
+        Returns:
+            dict: The first matching sentence or None.
+        """
+        user_id = filter_params.get("user_id")
+        note_id = filter_params.get("note_id")
+        sentence_index = filter_params.get("sentence_index")
 
         search_part = ""
+        params = [user_id]
 
         if note_id is not None:
             search_part += "AND note_id = %s "
-        if sentence_index is not None:
-            search_part += "AND sentence_index = %s "
-
-        select_query = (
-            """
-        SELECT sentence_index, sentence_text, importance_score
-        FROM user_notes
-        WHERE user_id = %s """
-            + search_part
-            + ";"
-        )
-
-        params = [user_id]
-        if note_id is not None:
             params.append(note_id)
         if sentence_index is not None:
+            search_part += "AND sentence_index = %s "
             params.append(sentence_index)
+
+        select_query = f"""
+        SELECT sentence_index, sentence_text, importance_score
+        FROM user_notes
+        WHERE user_id = %s {search_part};
+        """
 
         self.cursor.execute(select_query, tuple(params))
         result = self.cursor.fetchone()
 
         if result:
-            sentence_index, sentence_text, importance_score = result
+            idx, text, score = result
             return {
-                "sentence_index": sentence_index,
-                "sentence_text": sentence_text,
-                "importance_score": importance_score,
+                "sentence_index": idx,
+                "sentence_text": text,
+                "importance_score": score,
             }
-        else:
-            return None
+        return None
 
     def delete_sentences(self, user_id: str, note_id: str):
-        """Delete sentences for a given user_id and note_id."""
+        """
+        Delete all sentences belonging to a specific note.
+
+        Args:
+            user_id (str): User ID.
+            note_id (str): Note ID.
+        """
         delete_query = """
         DELETE FROM user_notes
         WHERE user_id = %s AND note_id = %s;
         """
         self.cursor.execute(delete_query, (user_id, note_id))
-        logger.info(f"Deleted sentences for user_id={user_id}, note_id={note_id}.")
+        logger.debug("Note sentences deleted", extra={"user_id": user_id, "note_id": note_id})
 
     def get_all_data(self):
-        """Retrieve all data from the user_notes table."""
+        """
+        Fetch all entries from user_notes (Warning: Large datasets).
+
+        Returns:
+            list: List of row tuples.
+        """
         self.cursor.execute(
             "SELECT user_id, note_id, sentence_index, sentence_text, timestamp, date FROM user_notes;"
         )
         return self.cursor.fetchall()
 
     def delete_sentence(self, user_id: str, note_id: str, sentence_index: int):
-        """Delete a specific sentence for a given user_id, note_id, and sentence_index."""
+        """
+        Delete a single specific sentence.
+
+        Args:
+            user_id (str): User ID.
+            note_id (str): Note ID.
+            sentence_index (int): Index of the sentence within the note.
+        """
         delete_query = """
         DELETE FROM user_notes
         WHERE user_id = %s AND note_id = %s AND sentence_index = %s;
         """
         self.cursor.execute(delete_query, (user_id, note_id, sentence_index))
-        logger.info(
-            f"Deleted sentence_index={sentence_index} for user_id={user_id}, note_id={note_id}."
+        logger.debug(
+            "Specific sentence deleted",
+            extra={"sentence_index": sentence_index, "user_id": user_id, "note_id": note_id},
         )
