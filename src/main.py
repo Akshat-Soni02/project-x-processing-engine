@@ -74,7 +74,7 @@ app = FastAPI(
 )
 
 
-@app.post("/smart-branch-subscription")
+@app.post("/branch/subcription/smart")
 async def smart_branch(request: Request):
     """
     Handle push subscription messages from Pub/Sub for SMART branch.
@@ -191,7 +191,7 @@ async def smart_branch(request: Request):
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
-@app.post("/stt-branch-subscription")
+@app.post("/branch/subcription/stt")
 async def stt_branch(request: Request):
     """
     Handle push subscription messages from Pub/Sub for STT branch.

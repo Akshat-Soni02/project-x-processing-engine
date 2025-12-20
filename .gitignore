@@ -22,3 +22,6 @@ env/
 .idea/
 .vscode/
 
+dev.tfvars
+prod.tfvars
+
