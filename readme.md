@@ -36,7 +36,7 @@ source venv/bin/activate
 
 - then Run
 ```
-pip install -e .
+pip install -e . ".[dev]"
 ```
 this performs an "editable" installation of the Python package located in the current directory
 

@@ -9,9 +9,6 @@ dependencies = [
     "python-dotenv",
     "google-genai",
     "python-multipart",
-    "ruff",
-    "black",
-    "pre-commit",
     "python-json-logger",
     "audioop-lts",
     "google-cloud-storage",
@@ -24,6 +21,14 @@ dependencies = [
     "google-auth"
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",
+    "ruff",
+    "black",
+    "pre-commit"
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
