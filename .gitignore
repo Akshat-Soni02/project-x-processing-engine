@@ -1,6 +1,6 @@
 .env
 
-credentials.json
+pubsub_credentials.json
 llm_credentials.json
 gcs_credentials.json
 test.wav

@@ -31,4 +31,15 @@ jobs:
       run: ruff check .
 
     - name: Run Tests with Pytest
+      env:
+        GCP_PROJECT_ID: "ci-test-project"
+        PUBSUB_SERVICE_ACCOUNT_PATH: "fake/path/to/key.json"
+        APP_ENV: "development"
+        LLM_SERVICE_ACCOUNT_PATH: "fake/path/to/key.json"
+        GCS_SERVICE_ACCOUNT_PATH: "fake/path/to/key.json"
+        DB_HOST: "localhost"
+        DB_PORT: "5433"
+        DB_USER: "postgres"
+        DB_PASSWORD: "mypassword"
+        DB_NAME: "mydb"
       run: pytest test_app.py
