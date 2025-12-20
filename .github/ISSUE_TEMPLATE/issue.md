@@ -1,3 +1,12 @@
+---
+name: Issue
+about: General Purpose
+title: ''
+labels: ''
+assignees: ''
+
+---
+
 ## Description
 Clearly describe the issue.
 
