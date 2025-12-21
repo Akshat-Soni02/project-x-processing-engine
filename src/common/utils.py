@@ -84,7 +84,7 @@ def write_file(file_path: str, content: str) -> bool:
         return False
 
 
-def get_input_data(gcs_audio_url: str) -> bytes:
+def get_gcs_data(gcs_audio_url: str) -> bytes:
     """
     Fetch raw bytes from a Google Cloud Storage URL.
 

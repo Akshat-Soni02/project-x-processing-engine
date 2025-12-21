@@ -7,6 +7,7 @@ import logging
 import logging.config
 import os
 import json
+import uuid
 from typing import Optional
 
 try:
@@ -52,6 +53,7 @@ class ReadableExtraFormatter(logging.Formatter):
         line = super().format(record)
 
         if extras:
+            extras = _json_safe(extras)
             line = f"{line} | {json.dumps(extras)}"
         return line
 
@@ -64,6 +66,16 @@ def _env() -> str:
 def _level() -> str:
     """Detect the default logging level."""
     return (os.getenv("LOG_LEVEL") or "INFO").upper()
+
+
+def _json_safe(obj):
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 def configure_logging(

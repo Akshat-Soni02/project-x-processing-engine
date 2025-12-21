@@ -9,6 +9,7 @@ import math
 from google import genai
 from google.genai import types
 from common.logging import get_logger
+from pipeline.exceptions import TransientPipelineError, FatalPipelineError
 
 logger = get_logger(__name__)
 
@@ -217,8 +218,11 @@ class GeminiProvider:
             "thought_tokens": thought_tokens,
             "confidence_score": confidence_score,
             "elapsed_time": elapsed_time,
-            "token_count_error": token_count_error,
         }
+
+        if token_count_error:
+            logger.error("Token count error", extra={"error": token_count_error})
+
         return metrics
 
     def process(self, input_data: dict, temperature: float = 0.2, top_p: float = 0.8) -> tuple:
@@ -285,14 +289,45 @@ class GeminiProvider:
                 contents=contents,
                 config=config,
             )
+        except genai.errors.ClientError as e:
+            # Handle 4xx Client Errors
+            # 429 Resource Exhausted -> Transient
+            if e.code == 429:
+                logger.warning("Resource exhausted (429)", extra={"error": str(e)})
+                raise TransientPipelineError("Resource exhausted", original_error=e)
+            # 400 Invalid Argument, 403 Permission Denied -> Fatal
+            logger.error("Client error", extra={"error": str(e), "code": e.code})
+            raise FatalPipelineError(f"Client error: {e.code}", original_error=e)
+        except genai.errors.ServerError as e:
+            # Handle 5xx Server Errors -> Transient
+            logger.warning("Server error", extra={"error": str(e), "code": e.code})
+            raise TransientPipelineError(f"Server error: {e.code}", original_error=e)
         except Exception as e:
             logger.critical("Gemini content generation failed", extra={"error": str(e)})
-            return None, {}
+            raise FatalPipelineError("Unexpected error during content generation", original_error=e)
 
         end_time = time.time()
 
-        if response is None or response.text is None:
-            return None, {}
+        if response is None:
+            raise FatalPipelineError("LLM returned None response")
+
+        if response.candidates and response.candidates[0].finish_reason:
+            finish_reason = response.candidates[0].finish_reason
+
+            if finish_reason == "STOP":
+                pass
+            # MAX_TOKENS, SAFETY, RECITATION, OTHER -> Fatal/Specific handling
+            elif finish_reason in ["SAFETY", "RECITATION", "BLOCKLIST"]:
+                raise FatalPipelineError(f"Generation blocked: {finish_reason}")
+            elif finish_reason == "MAX_TOKENS":
+                raise FatalPipelineError(
+                    "Generation stopped due to max tokens limit", original_error=None
+                )
+            else:
+                raise TransientPipelineError(f"Generation stopped with reason: {finish_reason}")
+
+        if response.text is None:
+            raise FatalPipelineError("LLM returned response with no text")
 
         # Calculate metrics
         prompt_with_si = system_instruction + "\n" + prompt

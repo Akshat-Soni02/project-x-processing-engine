@@ -11,7 +11,7 @@ from impl.gemini import GeminiProvider
 from impl.llm_input import get_llm_input
 from impl.llm_processor import call_llm
 from pipeline.base import Pipeline
-from pipeline.exceptions import FatalPipelineError
+from pipeline.exceptions import FatalPipelineError, TransientPipelineError
 
 
 class SmartPipeline(Pipeline):
@@ -23,12 +23,11 @@ class SmartPipeline(Pipeline):
         self,
         smart_provider: GeminiProvider,
         noteback_provider: GeminiProvider,
-        vector_db: Database,
+        db: Database,
     ):
-        super().__init__(PipelineEnum.SMART.value)
+        super().__init__(PipelineEnum.SMART.value, db)
         self.smart_provider = smart_provider
         self.noteback_provider = noteback_provider
-        self.vector_db = vector_db
 
     def _process(
         self, input_data: Any, context: Dict[str, Any]
@@ -48,7 +47,6 @@ class SmartPipeline(Pipeline):
         if not input_data:
             raise FatalPipelineError("Empty or null input provided")
 
-        # 1. Prepare Input for Context Call
         try:
             smart_input_data = get_llm_input(Llm_Call.SMART, input_data, input_type)
         except Exception as e:
@@ -57,34 +55,46 @@ class SmartPipeline(Pipeline):
         if smart_input_data is None:
             raise FatalPipelineError("Input data preparation returned null")
 
-        # 2. Call LLM for Context
         try:
-            context_response, _ = call_llm(self.smart_provider, smart_input_data, Llm_Call.SMART)
+            context_response, context_metrics = call_llm(
+                self.smart_provider, smart_input_data, Llm_Call.SMART
+            )
+        except (TransientPipelineError, FatalPipelineError):
+            raise
         except Exception as e:
             raise FatalPipelineError("Context preparation call failed", original_error=e)
 
         if context_response is None:
             self.logger.warning("Context preparation returned null")
-            return None, None
+            raise TransientPipelineError("Context preparation returned empty response")
+
+        if context_metrics is None:
+            self.logger.warning("Context preparation returned null metrics")
+        else:
+            try:
+                self._write_metrics(context["pipeline_stage_id"], Llm_Call.SMART, context_metrics)
+            except Exception as e:
+                self.logger.error("Failed to write metrics", extra={"error": str(e)})
 
         if not isinstance(context_response, dict):
             raise FatalPipelineError(
                 f"Invalid context response type: {type(context_response).__name__}"
             )
 
-        # 3. Prepare Vector DB Context
         try:
-            similarity_context = prepare_context_for_noteback(context_response, self.vector_db)
+            similarity_context = prepare_context_for_noteback(context_response, self.db)
+        except (TransientPipelineError, FatalPipelineError):
+            raise
         except Exception as e:
-            # This was logged as error in original code, treating as fatal for pipeline integrity
-            raise FatalPipelineError("Failed to prepare similarity context", original_error=e)
+            raise TransientPipelineError("Failed to prepare similarity context", original_error=e)
 
         try:
             formatted_sentences = format_sentences(context_response)
+        except (TransientPipelineError, FatalPipelineError):
+            raise
         except Exception as e:
-            raise FatalPipelineError("Failed to format sentences", original_error=e)
+            raise TransientPipelineError("Failed to format sentences", original_error=e)
 
-        # 4. Prepare Input for Noteback Call
         try:
             formatted_sentences_str = "\n".join(formatted_sentences) if formatted_sentences else ""
             similarity_context_str = "\n".join(similarity_context) if similarity_context else ""
@@ -114,16 +124,27 @@ class SmartPipeline(Pipeline):
         except Exception as e:
             raise FatalPipelineError("Failed to prepare noteback input", original_error=e)
 
-        # 5. Call LLM for Noteback
         try:
             noteback_response, noteback_metrics = call_llm(
                 self.noteback_provider, noteback_input_data, Llm_Call.NOTEBACK
             )
+        except (TransientPipelineError, FatalPipelineError):
+            raise
         except Exception as e:
-            raise FatalPipelineError("Noteback LLM call failed", original_error=e)
+            raise TransientPipelineError("Noteback LLM call failed", original_error=e)
 
         if noteback_response is None:
             self.logger.warning("Noteback processing returned null response")
-            return None, None
+            raise TransientPipelineError("Noteback processing returned null response")
+
+        if noteback_metrics is None:
+            self.logger.warning("Noteback processing returned null metrics")
+        else:
+            try:
+                self._write_metrics(
+                    context["pipeline_stage_id"], Llm_Call.NOTEBACK, noteback_metrics
+                )
+            except Exception as e:
+                self.logger.error("Failed to write metrics", extra={"error": str(e)})
 
         return noteback_response, noteback_metrics

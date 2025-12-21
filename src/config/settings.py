@@ -18,6 +18,7 @@ LLM_SERVICE_ACCOUNT_PATH = os.getenv("LLM_SERVICE_ACCOUNT_PATH", "")
 GCS_SERVICE_ACCOUNT_PATH = os.getenv("GCS_SERVICE_ACCOUNT_PATH", "")
 UPSTREAM_URL = os.getenv("UPSTREAM_URL", "http://localhost:8080")
 
+MAX_PIPELINE_STAGE_ATTEMPTS = int(os.getenv("MAX_PIPELINE_STAGE_ATTEMPTS", "3") or "3")
 
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "5433") or "5433")

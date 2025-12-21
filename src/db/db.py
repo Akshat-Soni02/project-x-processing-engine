@@ -5,8 +5,10 @@ Uses PostgreSQL with pgvector for efficient similarity search and context retrie
 
 import psycopg
 import uuid
+from psycopg.types.json import Json
 from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 from config.settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+from config.config import Llm_Call
 from common.logging import get_logger
 
 logger = get_logger(__name__)
@@ -41,16 +43,24 @@ class Database:
             logger.critical("Schema mismatch: %s", e)
             raise
 
-    def __del__(self):
+    def close(self):
         """
-        Gracefully close the database connection on object destruction.
+        Explicitly close the database connection.
         """
         try:
-            self.cursor.close()
-            self.conn.close()
+            if hasattr(self, "cursor") and self.cursor:
+                self.cursor.close()
+            if hasattr(self, "conn") and self.conn:
+                self.conn.close()
             logger.debug("Database connection closed")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error closing database connection", extra={"error": str(e)})
+
+    def __del__(self):
+        """
+        Attempt to close the connection on object destruction.
+        """
+        self.close()
 
     def _generate_query_embedding(self, text: str) -> tuple[list[float], int]:
         """
@@ -211,10 +221,8 @@ class Database:
 
     # Table llm_metrics {
     # id uuid [pk]
-    # job_id uuid [not null]
-    # audio_id uuid [not null]
     # pipeline_stage_id uuid [not null]
-    # llm_call enum('STT', 'CONTEXT', 'NOTEBACK')
+    # llm_call enum
     # input_tokens int
     # prompt_tokens int
     # total_input_tokens int
@@ -260,18 +268,22 @@ class Database:
     #   deleted_at timestamp
     # }
 
-    def write_metrics(self, metrics: dict):
+    def write_metrics(self, pipeline_stage_id: str, llm_call: Llm_Call, metrics: dict):
         """
         Write metrics to the database.
 
         Args:
+            pipeline_stage_id (str): ID of the pipeline stage.
+            llm_call (Llm_Call): LLM call type.
             metrics (dict): Dictionary containing metrics to be written.
         """
         insert_query = """
-        INSERT INTO llm_metrics (job_id, audio_id, pipeline_stage_id, llm_call, input_tokens, prompt_tokens, total_input_tokens, output_tokens, thought_tokens, confidence_score, elapsed_time)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+        INSERT INTO llm_metrics (pipeline_stage_id, llm_call, input_tokens, prompt_tokens, total_input_tokens, output_tokens, thought_tokens, confidence_score, elapsed_time)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
         """
-        self.cursor.execute(insert_query, tuple(metrics.values()))
+
+        params = (pipeline_stage_id, llm_call, *metrics.values())
+        self.cursor.execute(insert_query, params)
         self.conn.commit()
 
     def read_stage(self, job_id: uuid, pipeline_name: str) -> dict:
@@ -292,18 +304,19 @@ class Database:
         result = self.cursor.fetchone()
         if result:
             return {
-                "job_id": result[0],
-                "pipeline_name": result[1],
-                "status": result[2],
-                "attempt_count": result[3],
-                "last_heartbeat": result[4],
-                "error_message": result[5],
-                "started_at": result[6],
-                "completed_at": result[7],
+                "id": result[0],
+                "job_id": result[1],
+                "pipeline_name": result[2],
+                "status": result[3],
+                "attempt_count": result[4],
+                "last_heartbeat": result[5],
+                "error_message": result[6],
+                "started_at": result[7],
+                "completed_at": result[8],
             }
         return None
 
-    def read_output(self, pipeline_stage_id: uuid) -> dict:
+    def read_stage_output(self, pipeline_stage_id: uuid) -> dict:
         """
         Read pipeline output from the database.
 
@@ -320,13 +333,14 @@ class Database:
         result = self.cursor.fetchone()
         if result:
             return {
-                "pipeline_stage_id": result[0],
-                "content": result[1],
-                "data": result[2],
-                "start_second": result[3],
-                "end_second": result[4],
-                "created_at": result[5],
-                "deleted_at": result[6],
+                "id": result[0],
+                "pipeline_stage_id": result[1],
+                "content": result[2],
+                "data": result[3],
+                "start_second": result[4],
+                "end_second": result[5],
+                "created_at": result[6],
+                "deleted_at": result[7],
             }
         return None
 
@@ -341,7 +355,21 @@ class Database:
         update_query = """
         UPDATE pipeline_stages SET status = %s WHERE id = %s;
         """
-        self.cursor.execute(update_query, (status, pipeline_stage_id))
+        params = (status, pipeline_stage_id)
+        self.cursor.execute(update_query, params)
+        self.conn.commit()
+
+    def increment_pipeline_stage_attempt_count(self, pipeline_stage_id: uuid):
+        """
+        Increment pipeline stage attempt count in the database.
+
+        Args:
+            pipeline_stage_id (uuid): ID of the pipeline stage to be updated.
+        """
+        update_query = """
+        UPDATE pipeline_stages SET attempt_count = attempt_count + 1 WHERE id = %s;
+        """
+        self.cursor.execute(update_query, (pipeline_stage_id,))
         self.conn.commit()
 
     def update_pipeline_stage_error(self, pipeline_stage_id: uuid, error_message: str):
@@ -355,22 +383,24 @@ class Database:
         update_query = """
         UPDATE pipeline_stages SET error_message = %s WHERE id = %s;
         """
-        self.cursor.execute(update_query, (error_message, pipeline_stage_id))
+        params = (error_message, pipeline_stage_id)
+        self.cursor.execute(update_query, params)
         self.conn.commit()
 
-    def write_pipeline_output(self, pipeline_stage_id: uuid, output: dict):
+    def write_pipeline_stage_output(self, pipeline_stage_id: uuid, output: dict):
         """
-        Write pipeline output to the database.
+        Write pipeline stage output to the database.
 
         Args:
             pipeline_stage_id (uuid): ID of the pipeline stage to be written.
             output (dict): Dictionary containing output information.
         """
         insert_query = """
-        INSERT INTO pipeline_outputs (pipeline_stage_id, content, data, start_second, end_second)
-        VALUES (%s, %s, %s, %s, %s);
+        INSERT INTO pipeline_outputs (pipeline_stage_id, data)
+        VALUES (%s, %s);
         """
-        self.cursor.execute(insert_query, tuple(pipeline_stage_id, output.values()))
+        params = (pipeline_stage_id, Json(output))
+        self.cursor.execute(insert_query, params)
         self.conn.commit()
 
     # def read_job(self, job_id: str) -> list[dict]:

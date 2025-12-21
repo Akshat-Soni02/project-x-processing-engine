@@ -5,6 +5,7 @@ Handles vector database operations and formatting for contextually-aware LLM gen
 
 from common.logging import get_logger
 from db.db import Database
+from pipeline.exceptions import FatalPipelineError, TransientPipelineError
 
 logger = get_logger(__name__)
 
@@ -23,25 +24,28 @@ def prepare_context_for_noteback(context_response: dict, vector_db: Database) ->
     logger.debug("Preparing noteback similarity context")
 
     if context_response is None or not isinstance(context_response, dict):
-        logger.error("Invalid context response format: Expected dict")
-        return []
+        logger.error(
+            "Invalid context response format: Expected dict",
+            extra={"type": type(context_response).__name__},
+        )
+        raise FatalPipelineError("Invalid context response format: Expected dict")
 
     if vector_db is None:
         logger.error("Vector database not initialized")
-        return []
+        raise FatalPipelineError("Vector database not initialized")
 
     search_anchors = context_response.get("search_anchors", [])
 
     if not search_anchors:
         logger.warning("No search anchors found in context response")
-        return []
+        raise FatalPipelineError("No search anchors found in context response")
 
     if not isinstance(search_anchors, list):
         logger.error(
             "Invalid search_anchors format: Expected list",
             extra={"type": type(search_anchors).__name__},
         )
-        return []
+        raise FatalPipelineError("Invalid search_anchors format: Expected list")
 
     similarity_context = []
     total_query_chars = 0
@@ -65,7 +69,7 @@ def prepare_context_for_noteback(context_response: dict, vector_db: Database) ->
 
             if results is None:
                 logger.warning("No results from similarity search for anchor", extra={"index": idx})
-                continue
+                raise FatalPipelineError("No results from similarity search for anchor")
 
             for item in results:
                 try:
@@ -75,7 +79,7 @@ def prepare_context_for_noteback(context_response: dict, vector_db: Database) ->
                         or "combined_score" not in item
                     ):
                         logger.warning("Invalid result item structure", extra={"index": idx})
-                        continue
+                        raise FatalPipelineError("Invalid result item structure")
 
                     formatted = f"sentence_text: {item['sentence_text']}, value_score: {item['combined_score']}"
                     similarity_context.append(formatted)
@@ -83,14 +87,14 @@ def prepare_context_for_noteback(context_response: dict, vector_db: Database) ->
                     logger.warning(
                         "Failed to process result item", extra={"index": idx, "error": str(e)}
                     )
-                    continue
+                    raise FatalPipelineError("Failed to process result item")
 
         except Exception as e:
             logger.error(
                 "Similarity search failed", extra={"index": idx, "error": str(e)}, exc_info=True
             )
             failed_anchors += 1
-            continue
+            raise FatalPipelineError("Similarity search failed")
 
     if failed_anchors > 0:
         logger.warning(
@@ -118,20 +122,20 @@ def format_sentences(context_response: dict) -> list:
 
     if context_response is None or not isinstance(context_response, dict):
         logger.error("Invalid context response format: Expected dict")
-        return []
+        raise FatalPipelineError("Invalid context response format: Expected dict")
 
     sentences_data = context_response.get("input_to_sentences", [])
 
     if not sentences_data:
         logger.warning("No sentences found in context response")
-        return []
+        raise FatalPipelineError("No sentences found in context response")
 
     if not isinstance(sentences_data, list):
         logger.error(
             "Invalid sentences_data format: Expected list",
             extra={"type": type(sentences_data).__name__},
         )
-        return []
+        raise FatalPipelineError("Invalid sentences_data format: Expected list")
 
     formatted_sentences = []
     failed_sentences = 0
@@ -143,12 +147,12 @@ def format_sentences(context_response: dict) -> list:
                     "Invalid entry type", extra={"index": idx, "type": type(entry).__name__}
                 )
                 failed_sentences += 1
-                continue
+                raise FatalPipelineError("Invalid entry type")
 
             if "sentence" not in entry or "importance_score" not in entry:
                 logger.warning("Missing required fields in sentence entry", extra={"index": idx})
                 failed_sentences += 1
-                continue
+                raise FatalPipelineError("Missing required fields in sentence entry")
 
             sentence_text = entry["sentence"]
             importance_score = entry["importance_score"]
@@ -159,7 +163,7 @@ def format_sentences(context_response: dict) -> list:
                     extra={"index": idx, "type": type(sentence_text).__name__},
                 )
                 failed_sentences += 1
-                continue
+                raise FatalPipelineError("Invalid sentence text type")
 
             if not isinstance(importance_score, (int, float)):
                 logger.warning(
@@ -167,7 +171,7 @@ def format_sentences(context_response: dict) -> list:
                     extra={"index": idx, "type": type(importance_score).__name__},
                 )
                 failed_sentences += 1
-                continue
+                raise TransientPipelineError("Invalid importance_score type")
 
             formatted = f"{sentence_text}, importance_score: {importance_score:.2f}"
             formatted_sentences.append(formatted)
@@ -177,7 +181,7 @@ def format_sentences(context_response: dict) -> list:
                 "Failed to format sentence", extra={"index": idx, "error": str(e)}, exc_info=True
             )
             failed_sentences += 1
-            continue
+            raise FatalPipelineError("Failed to format sentence")
 
     if failed_sentences > 0:
         logger.warning(

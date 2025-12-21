@@ -9,7 +9,8 @@ from impl.gemini import GeminiProvider
 from impl.llm_input import get_llm_input
 from impl.llm_processor import call_llm
 from pipeline.base import Pipeline
-from pipeline.exceptions import FatalPipelineError
+from db.db import Database
+from pipeline.exceptions import FatalPipelineError, TransientPipelineError
 
 
 class SttPipeline(Pipeline):
@@ -17,8 +18,8 @@ class SttPipeline(Pipeline):
     Pipeline for Speech-to-Text processing.
     """
 
-    def __init__(self, stt_provider: GeminiProvider):
-        super().__init__(PipelineEnum.STT.value)
+    def __init__(self, stt_provider: GeminiProvider, db: Database):
+        super().__init__(PipelineEnum.STT.value, db)
         self.stt_provider = stt_provider
 
     def _process(
@@ -49,15 +50,22 @@ class SttPipeline(Pipeline):
 
         try:
             response, metrics = call_llm(self.stt_provider, stt_input_data, Llm_Call.STT)
-        except Exception as e:
-            # Assuming LLM call failures might be transient or fatal depending on the error,
-            # but for now mapping to Fatal to stop execution as per original logic's critical log.
-            # In a real scenario, we'd check for specific transient errors (e.g. 503).
+        except TransientPipelineError as e:
+            raise TransientPipelineError("LLM call failed", original_error=e)
+        except FatalPipelineError as e:
             raise FatalPipelineError("LLM call failed", original_error=e)
+
+        if metrics is None:
+            self.logger.warning("Processing returned empty metrics")
+        else:
+            try:
+                self._write_metrics(context["pipeline_stage_id"], Llm_Call.STT, metrics)
+            except Exception as e:
+                self.logger.error("Failed to write metrics", extra={"error": str(e)})
 
         if response is None:
             self.logger.warning("Processing returned empty response")
-            return None, None
+            raise TransientPipelineError("Processing returned empty response")
 
         if not isinstance(response, dict):
             self.logger.warning("Unexpected response type", extra={"type": type(response).__name__})

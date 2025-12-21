@@ -48,7 +48,7 @@ this performs an "editable" installation of the Python package located in the cu
 
 - Now run the project with
 ```
-uvicorn src.main:app --reload --reload-dir src
+uvicorn src.main:app --reload --workers 1 --reload-dir src
 ```
 
 

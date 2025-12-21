@@ -8,6 +8,8 @@ from typing import Any, Dict, Optional, Tuple
 from common.logging import get_logger
 from pipeline.exceptions import FatalPipelineError, TransientPipelineError
 from util.util import upstream_call
+from db.db import Database
+from config.config import Pipeline_Stage_Status, Llm_Call
 
 
 class Pipeline(ABC):
@@ -16,7 +18,7 @@ class Pipeline(ABC):
     Subclasses must implement the _process method.
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, db: Database):
         """
         Initialize the pipeline.
 
@@ -25,6 +27,7 @@ class Pipeline(ABC):
         """
         self.name = name
         self.logger = get_logger(f"pipeline.{name}")
+        self.db = db
 
     def run(self, input_data: Any, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -38,12 +41,19 @@ class Pipeline(ABC):
             Dict[str, Any]: The upstream payload that was sent.
         """
         context = context or {}
+        job_id = context.get("job_id")
+        pipeline_stage_id = context.get("pipeline_stage_id")
         user_id = context.get("user_id")
         note_id = context.get("note_id")
 
         self.logger.info(
             "Starting pipeline execution",
-            extra={"pipeline": self.name, "user_id": user_id, "note_id": note_id},
+            extra={
+                "pipeline": self.name,
+                "user_id": user_id,
+                "note_id": note_id,
+                "pipeline_stage_id": pipeline_stage_id,
+            },
         )
 
         response = None
@@ -59,42 +69,51 @@ class Pipeline(ABC):
 
             self.logger.info(
                 "Pipeline execution completed successfully",
-                extra={"pipeline": self.name, "user_id": user_id},
+                extra={
+                    "pipeline": self.name,
+                    "user_id": user_id,
+                    "note_id": note_id,
+                    "pipeline_stage_id": pipeline_stage_id,
+                },
             )
 
-        except FatalPipelineError as e:
-            self.logger.critical(
-                "Fatal pipeline error",
-                extra={"error": str(e), "pipeline": self.name},
-                exc_info=True,
-            )
-            error_info = {"type": "fatal", "message": str(e)}
-
-        except TransientPipelineError as e:
-            self.logger.error(
-                "Transient pipeline error",
-                extra={"error": str(e), "pipeline": self.name},
-                exc_info=True,
-            )
-            error_info = {"type": "transient", "message": str(e)}
-
+        except (FatalPipelineError, TransientPipelineError):
+            raise
         except Exception as e:
             self.logger.critical(
                 "Unhandled exception in pipeline",
-                extra={"error": str(e), "pipeline": self.name},
+                extra={
+                    "error": str(e),
+                    "pipeline": self.name,
+                    "pipeline_stage_id": pipeline_stage_id,
+                },
                 exc_info=True,
             )
-            error_info = {"type": "unhandled", "message": str(e)}
+            raise TransientPipelineError("Unhandled exception in pipeline", original_error=e)
+
+        # if successfull then
+        # insert output, update status to completed, increment attempt count
+
+        try:
+            self.db.write_pipeline_stage_output(pipeline_stage_id, response)
+            self.db.update_pipeline_stage_status(
+                pipeline_stage_id, Pipeline_Stage_Status.COMPLETED.value
+            )
+        except Exception as e:
+            self.logger.error("Failed to update stage status", extra={"error": str(e)})
+            raise TransientPipelineError("Failed to update stage status", original_error=e)
 
         # Construct upstream payload
         upstream_payload = {
+            "job_id": job_id,
             "note_id": note_id,
             "user_id": user_id,
             "location": context.get("location"),
             "timestamp": context.get("timestamp"),
-            "processed_output": response,
-            "branch": self.name,
-            "metrics": metrics,
+            "output": response,
+            "input_type": context.get("input_type"),
+            "pipeline_stage": self.name,
+            "status": Pipeline_Stage_Status.COMPLETED.value,
             "error": error_info,
         }
 
@@ -128,3 +147,12 @@ class Pipeline(ABC):
         except Exception as e:
             # upstream_call already logs errors, but we catch here to ensure run() doesn't crash
             self.logger.error("Failed to send upstream", extra={"error": str(e)})
+
+    def _write_metrics(self, pipeline_stage_id: str, llm_call: Llm_Call, metrics: Dict[str, Any]):
+        """
+        Write metrics to the database.
+        """
+        try:
+            self.db.write_metrics(pipeline_stage_id, llm_call, metrics)
+        except Exception as e:
+            self.logger.error("Failed to write metrics", extra={"error": str(e)})
