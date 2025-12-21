@@ -4,10 +4,23 @@ Handles Pub/Sub push subscriptions for STT and SMART processing branches.
 """
 
 import os
+import base64
+import json
+
 from common.logging import get_logger, configure_logging
 from pathlib import Path
 from config.settings import APP_ENV, LOG_LEVEL
 from db.db import Database
+from common.utils import get_input_data
+from config.config import User_Input_Type
+from services.llm.llm_service import run_smart, run_stt
+from fastapi import Request
+
+from contextlib import asynccontextmanager
+from typing import Dict, Any, Optional
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from services.pubsub.pubsub_service import PubSubService
 
 # Configure logging
 configure_logging(env=APP_ENV, level=LOG_LEVEL)
@@ -22,27 +35,10 @@ if cred_path.exists():
 else:
     logger.warning("Application credentials file not found")
 
-import base64
-import json
-from common.utils import get_input_data
-from config.config import User_Input_Type
-from services.llm.llm_service import run_smart, run_stt
-
-from fastapi import Request
-
-from contextlib import asynccontextmanager
-from typing import Dict, Any, Optional
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from services.pubsub.pubsub_service import PubSubService
-
 
 # Global state
 services: Dict[str, PubSubService] = {}
 listener_futures: Dict[str, Optional[Any]] = {"stt": None, "smart": None}
-
-# vertexai.init(project=Project.PROJECT_ID, location=Project.LOCATION)
-
 
 logger.debug("Services initialized")
 
