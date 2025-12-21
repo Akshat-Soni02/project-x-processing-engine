@@ -6,21 +6,21 @@ Handles Pub/Sub push subscriptions for STT and SMART processing branches.
 import os
 import base64
 import json
+from pathlib import Path
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from google import genai
 
 from common.logging import get_logger, configure_logging
-from pathlib import Path
-from config.settings import APP_ENV, LOG_LEVEL
-from db.db import Database
 from common.utils import get_input_data
-from config.config import User_Input_Type
-from services.llm.llm_service import run_smart, run_stt
-from fastapi import Request
-
-from contextlib import asynccontextmanager
-from typing import Dict, Any, Optional
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from services.pubsub.pubsub_service import PubSubService
+from config.settings import APP_ENV, LOG_LEVEL, GCP_PROJECT_ID, GCP_LOCATION, ENABLE_VERTEX_AI
+from config.config import User_Input_Type, Pipeline
+from db.db import Database
+from impl.gemini import GeminiProvider
+from pipeline.stt import SttPipeline
+from pipeline.smart import SmartPipeline
 
 # Configure logging
 configure_logging(env=APP_ENV, level=LOG_LEVEL)
@@ -36,13 +36,6 @@ else:
     logger.warning("Application credentials file not found")
 
 
-# Global state
-services: Dict[str, PubSubService] = {}
-listener_futures: Dict[str, Optional[Any]] = {"stt": None, "smart": None}
-
-logger.debug("Services initialized")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -50,7 +43,7 @@ async def lifespan(app: FastAPI):
     Resets or initializes global resources if required.
     """
     # Startup
-    logger.info("Application startup successfully: ready to receive messages")
+    logger.info("Application startup initiated")
 
     # Initialize Database
     try:
@@ -59,6 +52,31 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.critical("Failed to initialize Vector Database", extra={"error": str(e)})
         raise
+
+    # Initialize LLM Client and Pipelines
+    try:
+        gemini_client = genai.Client(
+            vertexai=ENABLE_VERTEX_AI, project=GCP_PROJECT_ID, location=GCP_LOCATION
+        )
+        logger.debug("Vertex AI Gemini Client initialized")
+
+        # Create providers
+        stt_provider = GeminiProvider(gemini_client)
+        smart_provider = GeminiProvider(gemini_client)
+        noteback_provider = GeminiProvider(gemini_client)
+
+        # Initialize Pipelines
+        app.state.stt_pipeline = SttPipeline(stt_provider)
+        app.state.smart_pipeline = SmartPipeline(
+            smart_provider, noteback_provider, app.state.vector_db
+        )
+        logger.info("Processing pipelines initialized")
+
+    except Exception as e:
+        logger.critical("Failed to initialize Pipelines", extra={"error": str(e)})
+        raise
+
+    logger.info("Application startup complete: ready to receive messages")
 
     try:
         yield
@@ -78,11 +96,10 @@ app = FastAPI(
 )
 
 
-@app.post("/branch/subcription/smart")
-async def smart_branch(request: Request):
+async def process_pipeline_request(request: Request, pipeline_type: Pipeline):
     """
-    Handle push subscription messages from Pub/Sub for SMART branch.
-    Decodes base64 message, extracts data, calls run_smart, and sends upstream.
+    Common wrapper for handling pipeline requests.
+    Parses Pub/Sub message, prepares input, and triggers the specified pipeline.
     """
     try:
         envelope = await request.json()
@@ -108,20 +125,6 @@ async def smart_branch(request: Request):
             return JSONResponse(status_code=400, content={"error": "Invalid payload format"})
 
         data = payload.get("data", {})
-        # job_id = data.get("job_id")
-
-        # job = app.state.vector_db.read_job(job_id)
-        # if not job:
-        #     logger.error("Job not found", extra={"job_id": job_id})
-        #     return JSONResponse(status_code=404, content={"error": "Job not found"})
-
-        # if job["status"] == "completed":
-        #     logger.warning("Job already completed", extra={"job_id": job_id})
-        #     return JSONResponse(status_code=400, content={"error": "Job already completed"})
-
-        # if job["status"] == "failed":
-        #     logger.warning("Job already failed", extra={"job_id": job_id})
-        #     return JSONResponse(status_code=400, content={"error": "Job already failed"})
 
         gcs_audio_url = data.get("gcs_audio_url")
         input_text = data.get("input_text")
@@ -131,10 +134,21 @@ async def smart_branch(request: Request):
         timestamp = data.get("timestamp")
         input_type = data.get("input_type")
 
+        # Context for the pipeline
+        context = {
+            "note_id": note_id,
+            "user_id": user_id,
+            "location": location,
+            "timestamp": timestamp,
+            "input_type": input_type,
+        }
+
         logger.debug(
-            "Processing request", extra={"note_id": note_id, "user_id": user_id, "branch": "smart"}
+            "Processing request",
+            extra={"note_id": note_id, "user_id": user_id, "branch": pipeline_type.value},
         )
 
+        # Prepare Input Data
         input_data = None
         try:
             if input_type == User_Input_Type.AUDIO_WAV:
@@ -163,206 +177,42 @@ async def smart_branch(request: Request):
             logger.error("Error preparing input data", extra={"error": str(e)}, exc_info=True)
             return JSONResponse(status_code=500, content={"error": "Failed to prepare input data"})
 
-        try:
-            logger.info(
-                "Starting processing pipeline",
-                extra={"branch": "smart", "user_id": user_id, "note_id": note_id},
-            )
+        # Run Pipeline
+        if pipeline_type == Pipeline.SMART:
+            request.app.state.smart_pipeline.run(input_data, context)
+        elif pipeline_type == Pipeline.STT:
+            request.app.state.stt_pipeline.run(input_data, context)
+        else:
+            logger.error("Unknown pipeline type requested", extra={"type": pipeline_type})
+            return JSONResponse(status_code=400, content={"error": "Unknown pipeline type"})
 
-            # Retrieve vector_db from app state
-            vector_db = request.app.state.vector_db
-
-            response, metrics = run_smart(input_data, vector_db)
-            logger.info(
-                "Processing pipeline completed", extra={"branch": "smart", "user_id": user_id}
-            )
-            logger.debug(
-                "Pipeline output metrics",
-                extra={
-                    "response_present": response is not None,
-                    "metrics_present": metrics is not None,
-                },
-            )
-            if response is None:
-                logger.warning("Empty response received from pipeline", extra={"branch": "smart"})
-        except Exception as e:
-            logger.critical(
-                "Critical error during processing",
-                extra={"error": str(e), "branch": "smart"},
-                exc_info=True,
-            )
-            response, metrics = None, None
-
-        upstream_output = {
-            "note_id": note_id,
-            "user_id": user_id,
-            "location": location,
-            "timestamp": timestamp,
-            "processed_output": response,
-            "branch": "smart",
-            "metrics": metrics,
-        }
-        logger.debug("Request details", extra={"output": upstream_output})
-        return JSONResponse(status_code=200, content={"status": "ok", "branch": "smart"})
+        return JSONResponse(
+            status_code=200, content={"status": "ok", "branch": pipeline_type.value}
+        )
 
     except Exception as e:
         logger.critical(
             "Unexpected error in request handler",
-            extra={"error": str(e), "branch": "smart"},
+            extra={"error": str(e), "branch": pipeline_type.value},
             exc_info=True,
         )
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
+
+
+@app.post("/branch/subcription/smart")
+async def smart_branch(request: Request):
+    """
+    Handle push subscription messages from Pub/Sub for SMART branch.
+    """
+    return await process_pipeline_request(request, Pipeline.SMART)
 
 
 @app.post("/branch/subcription/stt")
 async def stt_branch(request: Request):
     """
     Handle push subscription messages from Pub/Sub for STT branch.
-    Decodes base64 message, extracts data, calls run_stt, and sends upstream.
     """
-    try:
-        envelope = await request.json()
-    except Exception as e:
-        logger.error("Failed to parse request JSON", extra={"error": str(e)})
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON format"})
-
-    if not envelope or "message" not in envelope:
-        logger.warning("Invalid Pub/Sub message format")
-        return JSONResponse(status_code=400, content={"error": "Invalid Pub/Sub message format"})
-
-    try:
-        message_data = envelope["message"].get("data")
-        if not message_data:
-            logger.warning("Message data is missing in Pub/Sub envelope")
-            return JSONResponse(status_code=400, content={"error": "Message data is missing"})
-
-        try:
-            message_payload_str = base64.b64decode(message_data).decode("utf-8")
-            payload = json.loads(message_payload_str)
-        except (ValueError, json.JSONDecodeError) as e:
-            logger.error("Failed to decode message payload", extra={"error": str(e)})
-            return JSONResponse(status_code=400, content={"error": "Invalid payload format"})
-
-        data = payload.get("data", {})
-        # job_id = data.get("job_id")
-
-        # job = app.state.vector_db.read_job(job_id)
-        # if not job:
-        #     logger.error("Job not found", extra={"job_id": job_id})
-        #     return JSONResponse(status_code=404, content={"error": "Job not found"})
-
-        # if job["status"] == "completed":
-        #     logger.warning("Job already completed", extra={"job_id": job_id})
-        #     return JSONResponse(status_code=400, content={"error": "Job already completed"})
-
-        # if job["status"] == "failed":
-        #     logger.warning("Job already failed", extra={"job_id": job_id})
-        #     return JSONResponse(status_code=400, content={"error": "Job already failed"})
-
-        gcs_audio_url = data.get("gcs_audio_url")
-        input_text = data.get("input_text")
-        note_id = data.get("note_id")
-        user_id = data.get("user_id")
-        location = data.get("location")
-        timestamp = data.get("timestamp")
-        input_type = data.get("input_type")
-
-        logger.debug(
-            "Processing request", extra={"note_id": note_id, "user_id": user_id, "branch": "stt"}
-        )
-
-        input_data = None
-        try:
-            if input_type == User_Input_Type.AUDIO_WAV:
-                if not gcs_audio_url:
-                    logger.warning("Audio URL missing for this input type")
-                    return JSONResponse(
-                        status_code=400, content={"error": "GCS audio URL required"}
-                    )
-                input_data = get_input_data(gcs_audio_url)
-                if not input_data:
-                    logger.error("Failed to fetch audio data", extra={"url": gcs_audio_url})
-                    return JSONResponse(
-                        status_code=400, content={"error": "Failed to fetch audio data"}
-                    )
-            elif input_type == User_Input_Type.TEXT_PLAIN:
-                if not input_text:
-                    logger.warning("Input text missing for this input type")
-                    return JSONResponse(status_code=400, content={"error": "Input text required"})
-                input_data = input_text
-            else:
-                logger.warning("Unsupported input type", extra={"input_type": input_type})
-                return JSONResponse(
-                    status_code=400, content={"error": f"Unknown input type: {input_type}"}
-                )
-        except Exception as e:
-            logger.error("Error preparing input data", extra={"error": str(e)}, exc_info=True)
-            return JSONResponse(status_code=500, content={"error": "Failed to prepare input data"})
-
-        try:
-            logger.info(
-                "Starting processing pipeline",
-                extra={"branch": "stt", "user_id": user_id, "note_id": note_id},
-            )
-            response, metrics = run_stt(input_data)
-            logger.info(
-                "Processing pipeline completed", extra={"branch": "stt", "user_id": user_id}
-            )
-            logger.debug(
-                "Pipeline output metrics",
-                extra={
-                    "response_present": response is not None,
-                    "metrics_present": metrics is not None,
-                },
-            )
-            if response is None:
-                logger.warning("Empty response received from pipeline", extra={"branch": "stt"})
-
-            if metrics is None:
-                logger.warning("Empty metrics received from pipeline", extra={"branch": "stt"})
-            # else:
-            #     metrics_record = {
-            #         "job_id": job_id,
-            #         "user_id": user_id,
-            #         "audio_id": audio_id,
-            #         "pipeline_stage_id": pipeline_stage_id,
-            #         "llm_call": llm_call,
-            #         "input_tokens": input_tokens,
-            #         "prompt_tokens": prompt_tokens,
-            #         "total_input_tokens": total_input_tokens,
-            #         "output_tokens": output_tokens,
-            #         "thought_tokens": thought_tokens,
-            #         "confidence_score": confidence_score,
-            #         "elapsed_time": elapsed_time,
-            #     }
-            #     app.state.vector_db.write_metrics(metrics_record)
-        except Exception as e:
-            logger.critical(
-                "Critical error during processing",
-                extra={"error": str(e), "branch": "stt"},
-                exc_info=True,
-            )
-            response, metrics = None, None
-
-        upstream_output = {
-            "note_id": note_id,
-            "user_id": user_id,
-            "location": location,
-            "timestamp": timestamp,
-            "processed_output": response,
-            "branch": "stt",
-            "metrics": metrics,
-        }
-        logger.debug("Request details", extra={"output": upstream_output})
-        return JSONResponse(status_code=200, content={"status": "ok", "branch": "stt"})
-
-    except Exception as e:
-        logger.critical(
-            "Unexpected error in request handler",
-            extra={"error": str(e), "branch": "stt"},
-            exc_info=True,
-        )
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+    return await process_pipeline_request(request, Pipeline.STT)
 
 
 @app.get("/health")
@@ -371,7 +221,10 @@ def health():
 
 
 @app.post("/processed-output")
-async def upstream_call(request: Request):
+async def upstream_call_endpoint(request: Request):
+    """
+    Mock upstream endpoint for testing callbacks.
+    """
     data = await request.json()
     logger.debug("Upstream processed output received", extra={"data": data})
     return {"status": "ok"}

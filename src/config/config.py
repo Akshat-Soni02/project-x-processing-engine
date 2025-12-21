@@ -19,7 +19,7 @@ class Llm_Call:
     NOTEBACK = "noteback"
 
 
-class Pipeline:
+class Pipeline(str, Enum):
     STT = "stt"
     SMART = "smart"
 
