@@ -19,6 +19,17 @@ class Llm_Call:
     NOTEBACK = "noteback"
 
 
+class Pipeline:
+    STT = "stt"
+    SMART = "smart"
+
+
+class Pipeline_Stage:
+    STT = "stt"
+    SMART_CONTEXT = "smart_context"
+    SMART_NOTEBACK = "smart_noteback"
+
+
 class User_Input_Type(str, Enum):
     AUDIO_WAV = "audio/wav"
     TEXT_PLAIN = "text/plain"

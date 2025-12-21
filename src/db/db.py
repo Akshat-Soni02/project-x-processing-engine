@@ -4,6 +4,7 @@ Uses PostgreSQL with pgvector for efficient similarity search and context retrie
 """
 
 import psycopg
+import uuid
 from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 from config.settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 from common.logging import get_logger
@@ -227,31 +228,27 @@ class Database:
     # id uuid [pk]
 
     # job_id uuid [not null]
-    # audio_id uuid [not null]
-
-    # pipeline_name enum('STT', 'SMART')
-    # model varchar(100)
+    # pipeline_name enum
 
     # status enum('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')
+
+    # attempt_count int [default: 0]
+    # last_heartbeat timestamp
+    # error_message text
 
     # started_at timestamp
     # completed_at timestamp
 
-    # error_message text
+    # indexes {
+    #     (job_id, pipeline_name) [unique]
+    # }
+
     # }
 
     # Table pipeline_outputs {
     #   id uuid [pk]
 
     #   pipeline_stage_id uuid [not null]
-
-    #   output_type enum(
-    #     'STT_TEXT',
-    #     'TASK',
-    #     'TAG',
-    #     'ANXIETY_SCORE',
-    #     'NOTE_BACK'
-    #   )
 
     #   content text
     #   data jsonb
@@ -277,34 +274,133 @@ class Database:
         self.cursor.execute(insert_query, tuple(metrics.values()))
         self.conn.commit()
 
-    def read_job(self, job_id: str) -> list[dict]:
+    def read_stage(self, job_id: uuid, pipeline_name: str) -> dict:
         """
-        Read job from the database.
+        Read stage from the database.
 
         Args:
-            job_id (str): ID of the job to be read.
+            job_id (uuid): ID of the job to be read.
+            pipeline_name (str): Name of the pipeline to be read.
 
         Returns:
-            list: List of job dictionaries.
+            dict: Dictionary containing stage information.
         """
         select_query = """
-        SELECT * FROM jobs WHERE job_id = %s;
+        SELECT * FROM pipeline_stages WHERE job_id = %s AND pipeline_name = %s;
         """
-        self.cursor.execute(select_query, (job_id,))
+        self.cursor.execute(select_query, (job_id, pipeline_name))
         result = self.cursor.fetchone()
         if result:
             return {
                 "job_id": result[0],
-                "user_id": result[1],
-                "audio_id": result[2],
-                "status": result[3],
-                "error_code": result[4],
+                "pipeline_name": result[1],
+                "status": result[2],
+                "attempt_count": result[3],
+                "last_heartbeat": result[4],
                 "error_message": result[5],
-                "retry_count": result[6],
-                "created_at": result[7],
-                "updated_at": result[8],
+                "started_at": result[6],
+                "completed_at": result[7],
             }
         return None
+
+    def read_output(self, pipeline_stage_id: uuid) -> dict:
+        """
+        Read pipeline output from the database.
+
+        Args:
+            pipeline_stage_id (uuid): ID of the pipeline stage to be read.
+
+        Returns:
+            dict: Dictionary containing output information.
+        """
+        select_query = """
+        SELECT * FROM pipeline_outputs WHERE pipeline_stage_id = %s;
+        """
+        self.cursor.execute(select_query, (pipeline_stage_id,))
+        result = self.cursor.fetchone()
+        if result:
+            return {
+                "pipeline_stage_id": result[0],
+                "content": result[1],
+                "data": result[2],
+                "start_second": result[3],
+                "end_second": result[4],
+                "created_at": result[5],
+                "deleted_at": result[6],
+            }
+        return None
+
+    def update_pipeline_stage_status(self, pipeline_stage_id: uuid, status: str):
+        """
+        Update pipeline stage status in the database.
+
+        Args:
+            pipeline_stage_id (uuid): ID of the pipeline stage to be updated.
+            status (str): New status of the pipeline stage.
+        """
+        update_query = """
+        UPDATE pipeline_stages SET status = %s WHERE id = %s;
+        """
+        self.cursor.execute(update_query, (status, pipeline_stage_id))
+        self.conn.commit()
+
+    def update_pipeline_stage_error(self, pipeline_stage_id: uuid, error_message: str):
+        """
+        Update pipeline stage error in the database.
+
+        Args:
+            pipeline_stage_id (uuid): ID of the pipeline stage to be updated.
+            error_message (str): New error message of the pipeline stage.
+        """
+        update_query = """
+        UPDATE pipeline_stages SET error_message = %s WHERE id = %s;
+        """
+        self.cursor.execute(update_query, (error_message, pipeline_stage_id))
+        self.conn.commit()
+
+    def write_pipeline_output(self, pipeline_stage_id: uuid, output: dict):
+        """
+        Write pipeline output to the database.
+
+        Args:
+            pipeline_stage_id (uuid): ID of the pipeline stage to be written.
+            output (dict): Dictionary containing output information.
+        """
+        insert_query = """
+        INSERT INTO pipeline_outputs (pipeline_stage_id, content, data, start_second, end_second)
+        VALUES (%s, %s, %s, %s, %s);
+        """
+        self.cursor.execute(insert_query, tuple(pipeline_stage_id, output.values()))
+        self.conn.commit()
+
+    # def read_job(self, job_id: str) -> list[dict]:
+    #     """
+    #     Read job from the database.
+
+    #     Args:
+    #         job_id (str): ID of the job to be read.
+
+    #     Returns:
+    #         list: List of job dictionaries.
+    #     """
+    #     select_query = """
+    #     SELECT * FROM jobs WHERE job_id = %s;
+    #     """
+    #     self.cursor.execute(select_query, (job_id,))
+    #     result = self.cursor.fetchone()
+    #     if result:
+    #         return {
+    #             "job_id": result[0],
+    #             "user_id": result[1],
+    #             "audio_id": result[2],
+    #             "status": result[3],
+    #             "error_code": result[4],
+    #             "error_message": result[5],
+    #             "retry_count": result[6],
+    #             "created_at": result[7],
+    #             "updated_at": result[8],
+    #         }
+    #     return None
 
     # def get_sentence(self, filter_params: dict) -> dict:
     #     """
