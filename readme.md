@@ -2,6 +2,12 @@
 ***postman***: https://nothing-3096.postman.co/workspace/My-Workspace~59e8967f-068e-4df0-821c-50d3c12fa651/collection/41321691-1614f987-96ed-479f-a61b-f1386b4ce4e4?action=share&source=copy-link&creator=41321691
 
 
+**Retry Policy**
+
+- The current retries are based on PubSub messages
+- If a pipeline stage fails, based on the error we ACK or NACK the message which handles the retry logic
+- If a stage of pipeline fails, whole pipeline is retried
+
 **general**
 
 - while installing additional libs: check support for py version & add the respective to the requirements file

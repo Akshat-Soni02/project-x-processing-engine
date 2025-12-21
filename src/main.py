@@ -112,20 +112,20 @@ async def smart_branch(request: Request):
             return JSONResponse(status_code=400, content={"error": "Invalid payload format"})
 
         data = payload.get("data", {})
-        job_id = data.get("job_id")
+        # job_id = data.get("job_id")
 
-        job = app.state.vector_db.read_job(job_id)
-        if not job:
-            logger.error("Job not found", extra={"job_id": job_id})
-            return JSONResponse(status_code=404, content={"error": "Job not found"})
+        # job = app.state.vector_db.read_job(job_id)
+        # if not job:
+        #     logger.error("Job not found", extra={"job_id": job_id})
+        #     return JSONResponse(status_code=404, content={"error": "Job not found"})
 
-        if job["status"] == "completed":
-            logger.warning("Job already completed", extra={"job_id": job_id})
-            return JSONResponse(status_code=400, content={"error": "Job already completed"})
+        # if job["status"] == "completed":
+        #     logger.warning("Job already completed", extra={"job_id": job_id})
+        #     return JSONResponse(status_code=400, content={"error": "Job already completed"})
 
-        if job["status"] == "failed":
-            logger.warning("Job already failed", extra={"job_id": job_id})
-            return JSONResponse(status_code=400, content={"error": "Job already failed"})
+        # if job["status"] == "failed":
+        #     logger.warning("Job already failed", extra={"job_id": job_id})
+        #     return JSONResponse(status_code=400, content={"error": "Job already failed"})
 
         gcs_audio_url = data.get("gcs_audio_url")
         input_text = data.get("input_text")
@@ -248,20 +248,20 @@ async def stt_branch(request: Request):
             return JSONResponse(status_code=400, content={"error": "Invalid payload format"})
 
         data = payload.get("data", {})
-        job_id = data.get("job_id")
+        # job_id = data.get("job_id")
 
-        job = app.state.vector_db.read_job(job_id)
-        if not job:
-            logger.error("Job not found", extra={"job_id": job_id})
-            return JSONResponse(status_code=404, content={"error": "Job not found"})
+        # job = app.state.vector_db.read_job(job_id)
+        # if not job:
+        #     logger.error("Job not found", extra={"job_id": job_id})
+        #     return JSONResponse(status_code=404, content={"error": "Job not found"})
 
-        if job["status"] == "completed":
-            logger.warning("Job already completed", extra={"job_id": job_id})
-            return JSONResponse(status_code=400, content={"error": "Job already completed"})
+        # if job["status"] == "completed":
+        #     logger.warning("Job already completed", extra={"job_id": job_id})
+        #     return JSONResponse(status_code=400, content={"error": "Job already completed"})
 
-        if job["status"] == "failed":
-            logger.warning("Job already failed", extra={"job_id": job_id})
-            return JSONResponse(status_code=400, content={"error": "Job already failed"})
+        # if job["status"] == "failed":
+        #     logger.warning("Job already failed", extra={"job_id": job_id})
+        #     return JSONResponse(status_code=400, content={"error": "Job already failed"})
 
         gcs_audio_url = data.get("gcs_audio_url")
         input_text = data.get("input_text")
