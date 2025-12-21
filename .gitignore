@@ -1,6 +1,6 @@
 .env
 
-credentials.json
+pubsub_credentials.json
 llm_credentials.json
 gcs_credentials.json
 test.wav
@@ -21,4 +21,7 @@ env/
 .DS_Store
 .idea/
 .vscode/
+
+dev.tfvars
+prod.tfvars
 
