@@ -67,3 +67,5 @@ uvicorn src.main:app --reload --reload-dir src
 - the workflow file first builds the image and then deploys it
 - Env and Vars are stored in github
 
+
+
