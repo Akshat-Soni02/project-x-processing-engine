@@ -26,13 +26,26 @@ class Database:
         Establish connection to the PostgreSQL database and initialize the embedding model.
         """
         try:
-            self.conn = psycopg.connect(
-                dbname=DB_NAME,
-                user=DB_USER,
-                password=DB_PASSWORD,
-                host=DB_HOST,
-                port=DB_PORT,
-            )
+            # If DB_HOST starts with /cloudsql, it's a Unix Socket (Cloud Run)
+            # Otherwise, it's a standard IP/Hostname (Local Dev)
+            if DB_HOST.startswith("/cloudsql"):
+                # Connection for Cloud Run
+                self.conn = psycopg.connect(
+                    dbname=DB_NAME,
+                    user=DB_USER,
+                    password=DB_PASSWORD,
+                    host=DB_HOST,  # Path like /cloudsql/project:region:instance
+                    # No port needed for Unix sockets
+                )
+            else:
+                # Connection for Local Dev
+                self.conn = psycopg.connect(
+                    dbname=DB_NAME,
+                    user=DB_USER,
+                    password=DB_PASSWORD,
+                    host=DB_HOST,
+                    port=DB_PORT,
+                )
             self.conn.autocommit = True
             self.cursor = self.conn.cursor()
             logger.debug("Database connection established")

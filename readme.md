@@ -47,8 +47,23 @@ pip install -e . ".[dev]"
 this performs an "editable" installation of the Python package located in the current directory
 
 - Now run the project with
+```bash
+# With uv (recommended - handles dependencies automatically)
+PYTHONPATH=src uv run uvicorn src.main:app --reload --reload-dir src
+
+# Or without uv (using activated venv)
+uvicorn src.main:app --reload --reload-dir src
 ```
-uvicorn src.main:app --reload --workers 1 --reload-dir src
-```
+
+***Deployment***
+- We use github actions for CI/CD
+- We use gcloud for deployment
+
+**Deployment Steps**
+- Setup Dockerfile
+- We have a seperate infra repo for gcloud
+- Once all the resources are up
+- Take a look at workflow files in .github/workflows
+- the workflow file first builds the image and then deploys it
 
 

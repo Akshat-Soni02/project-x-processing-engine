@@ -1,0 +1,101 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "staging" ]
+  pull_request:
+    branches: [ "staging" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: lint and test
+      env:
+        GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+        GCP_REGION: ${{ vars.GCP_REGION }}
+        ENABLE_VERTEX_AI: ${{ vars.ENABLE_VERTEX_AI }}
+        UPSTREAM_URL: ${{ vars.UPSTREAM_URL }}
+        MAX_PIPELINE_STAGE_ATTEMPTS: ${{ vars.MAX_PIPELINE_STAGE_ATTEMPTS }}
+        DB_HOST: ${{ vars.DB_HOST }}
+        DB_PORT: ${{ vars.DB_PORT }}
+        DB_USER: ${{ vars.DB_USER }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        DB_NAME: ${{ vars.DB_NAME }}
+      run: |
+        uv sync --all-extras --dev
+        uv run ruff check .
+        uv run black --check .
+        uv run pytest test_app.py
+
+  deploy:
+    needs: build-and-test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
+    
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: 'auth'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: 'Build and Push'
+        run: |
+          gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev
+          docker build -t ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_REPO }}/engine:${{ github.sha }} .
+          docker push ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_REPO }}/engine:${{ github.sha }}
+
+      - name: 'Deploy to Cloud Run'
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: ${{ vars.GCP_SERVICE_NAME }}
+          region: ${{ vars.GCP_REGION }}
+          image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_REPO }}/engine:${{ github.sha }}
+
+          env_vars: |
+            APP_ENV=${{ vars.APP_ENV }}
+            LOG_LEVEL=${{ vars.LOG_LEVEL }}
+            GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
+            GCP_REGION=${{ vars.GCP_REGION }}
+            ENABLE_VERTEX_AI=${{ vars.ENABLE_VERTEX_AI }}
+            UPSTREAM_URL=${{ vars.UPSTREAM_URL }}
+            DB_HOST=/cloudsql/${{ vars.GCP_PROJECT_ID }}:${{ vars.GCP_REGION }}:${{ vars.GCP_INSTANCE_ID }}
+            DB_USER=${{ vars.DB_USER }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            DB_NAME=${{ vars.DB_NAME }}
+            MAX_PIPELINE_STAGE_ATTEMPTS=${{ vars.MAX_PIPELINE_STAGE_ATTEMPTS }}
+
+          flags: |
+            --add-cloudsql-instances=${{ vars.GCP_PROJECT_ID }}:${{ vars.GCP_REGION }}:${{ vars.GCP_INSTANCE_ID }}
+            --allow-unauthenticated
+            --port=8080
+            --memory=2Gi
+            --cpu=1
+            --max-instances=5
+            --concurrency=10
+            --timeout=300
+            
