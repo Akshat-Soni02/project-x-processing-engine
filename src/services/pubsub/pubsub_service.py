@@ -7,11 +7,11 @@ import json
 import threading
 from typing import Optional
 import google.cloud.pubsub_v1 as pubsub_v1
-from google.oauth2 import service_account
+import google.auth
 from common.utils import get_input_data
 from util.util import upstream_call
 from services.llm.llm_service import run_smart, run_stt
-from config.settings import GCP_PROJECT_ID, PUBSUB_SERVICE_ACCOUNT_PATH
+from config.settings import GCP_PROJECT_ID
 from config.config import User_Input_Type
 from common.logging import get_logger
 
@@ -43,14 +43,10 @@ class PubSubService:
         """
         if not GCP_PROJECT_ID:
             raise PubsubServiceError("GCP_PROJECT_ID not configured")
-        if not PUBSUB_SERVICE_ACCOUNT_PATH:
-            raise PubsubServiceError("PUBSUB_SERVICE_ACCOUNT_PATH not configured")
         if not subscription_id:
             raise PubsubServiceError("subscription_id not configured")
 
-        self.credentials = service_account.Credentials.from_service_account_file(
-            PUBSUB_SERVICE_ACCOUNT_PATH
-        )
+        self.credentials, _ = google.auth.default()
         self.subscriber = pubsub_v1.SubscriberClient(credentials=self.credentials)
         self.subscription_path = self.subscriber.subscription_path(GCP_PROJECT_ID, subscription_id)
         self.flow_control = pubsub_v1.types.FlowControl(

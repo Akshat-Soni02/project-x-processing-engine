@@ -5,10 +5,9 @@ Provides standardized methods for reading/writing files and fetching cloud asset
 
 import json
 from pathlib import Path
-from google.oauth2 import service_account
+import google.auth
 from google.cloud import storage
 from common.logging import get_logger
-from config.settings import GCS_SERVICE_ACCOUNT_PATH
 
 logger = get_logger(__name__)
 
@@ -95,9 +94,7 @@ def get_gcs_data(gcs_audio_url: str) -> bytes:
         bytes: Raw file content or None on failure.
     """
     try:
-        credentials = service_account.Credentials.from_service_account_file(
-            GCS_SERVICE_ACCOUNT_PATH
-        )
+        credentials, _ = google.auth.default()
         client = storage.Client(credentials=credentials)
         bucket_name, blob_name = gcs_audio_url.replace("gs://", "").split("/", 1)
         bucket = client.bucket(bucket_name)

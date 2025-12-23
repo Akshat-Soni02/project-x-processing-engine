@@ -3,10 +3,8 @@ Main entry point for the Arilo Processing Engine FastAPI application.
 Handles Pub/Sub push subscriptions for STT and SMART processing branches.
 """
 
-import os
 import base64
 import json
-from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -19,7 +17,7 @@ from config.settings import (
     APP_ENV,
     LOG_LEVEL,
     GCP_PROJECT_ID,
-    GCP_LOCATION,
+    GCP_REGION,
     ENABLE_VERTEX_AI,
     MAX_PIPELINE_STAGE_ATTEMPTS,
 )
@@ -35,14 +33,15 @@ from util.util import upstream_call
 configure_logging(env=APP_ENV, level=LOG_LEVEL)
 logger = get_logger(__name__)
 
+# giving cloud run service account all the required permissions
 # Credentials configuration
-project_root = Path(__file__).parent.parent
-cred_path = project_root / "llm_credentials.json"
-if cred_path.exists():
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(cred_path)
-    logger.debug("Application credentials loaded from local file")
-else:
-    logger.warning("Application credentials file not found")
+# project_root = Path(__file__).parent.parent
+# cred_path = project_root / LLM_SERVICE_ACCOUNT_PATH
+# if cred_path.exists():
+#     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(cred_path)
+#     logger.debug("Application credentials loaded from local file")
+# else:
+#     logger.warning("Application credentials file not found")
 
 
 from fastapi.concurrency import run_in_threadpool
@@ -66,7 +65,7 @@ async def lifespan(app: FastAPI):
 
     try:
         gemini_client = genai.Client(
-            vertexai=ENABLE_VERTEX_AI, project=GCP_PROJECT_ID, location=GCP_LOCATION
+            vertexai=ENABLE_VERTEX_AI, project=GCP_PROJECT_ID, location=GCP_REGION
         )
         logger.debug("Vertex AI Gemini Client initialized")
 
