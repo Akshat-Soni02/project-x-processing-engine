@@ -90,6 +90,7 @@ jobs:
             MAX_PIPELINE_STAGE_ATTEMPTS=${{ vars.MAX_PIPELINE_STAGE_ATTEMPTS }}
 
           flags: |
+            --service-account=${{ vars.RUNTIME_SERVICE_ACCOUNT_EMAIL }}
             --add-cloudsql-instances=${{ vars.GCP_PROJECT_ID }}:${{ vars.GCP_REGION }}:${{ vars.GCP_INSTANCE_ID }}
             --allow-unauthenticated
             --port=8080
