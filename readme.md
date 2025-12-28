@@ -65,5 +65,7 @@ uvicorn src.main:app --reload --reload-dir src
 - Once all the resources are up
 - Take a look at workflow files in .github/workflows
 - the workflow file first builds the image and then deploys it
+- Env and Vars are stored in github
+
 
 

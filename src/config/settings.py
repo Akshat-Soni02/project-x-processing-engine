@@ -27,19 +27,19 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "mypassword")
 DB_NAME = os.getenv("DB_NAME", "mydb")
 
 
-required_vars = [
-    "GCP_PROJECT_ID",
-    "GCP_REGION",
-    "ENABLE_VERTEX_AI",
-    "UPSTREAM_URL",
-    "MAX_PIPELINE_STAGE_ATTEMPTS",
-    "DB_HOST",
-    "DB_PORT",
-    "DB_USER",
-    "DB_PASSWORD",
-    "DB_NAME",
-]
+required_vars = {
+    "GCP_PROJECT_ID": GCP_PROJECT_ID,
+    "GCP_REGION": GCP_REGION,
+    "ENABLE_VERTEX_AI": ENABLE_VERTEX_AI,
+    "UPSTREAM_URL": UPSTREAM_URL,
+    "MAX_PIPELINE_STAGE_ATTEMPTS": MAX_PIPELINE_STAGE_ATTEMPTS,
+    "DB_HOST": DB_HOST,
+    "DB_PORT": DB_PORT,
+    "DB_USER": DB_USER,
+    "DB_PASSWORD": DB_PASSWORD,
+    "DB_NAME": DB_NAME,
+}
 
-for var in required_vars:
-    if not os.getenv(var):
-        raise ValueError(f"Missing required environment variable: {var}")
+for var_name, var_value in required_vars.items():
+    if not var_value:
+        raise ValueError(f"Missing required environment variable: {var_name}")

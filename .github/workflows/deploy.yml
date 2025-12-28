@@ -9,6 +9,7 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    environment: staging
 
     steps:
     - name: Checkout code
@@ -20,7 +21,7 @@ jobs:
         enable-cache: true
 
     - name: Set up Python
-      run: uv python install 3.12
+      run: uv python install 3.14
 
     - name: lint and test
       env:
@@ -34,6 +35,7 @@ jobs:
         DB_USER: ${{ vars.DB_USER }}
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         DB_NAME: ${{ vars.DB_NAME }}
+        PYTHONPATH: src
       run: |
         uv sync --all-extras --dev
         uv run ruff check .
